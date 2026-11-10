@@ -7,3 +7,5 @@ google-genai
 streamlit-keyup
 pypdf
 python-docx
+ezdxf
+matplotlib

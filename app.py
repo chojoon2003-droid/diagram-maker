@@ -20,6 +20,7 @@ from PIL import Image
 from st_keyup import st_keyup
 
 import io_bridge as bridge
+import cad_import
 import claude_cli
 import claude_review
 import codex_bridge
@@ -58,7 +59,7 @@ ss = st.session_state
 for k, v in {
     "style_guide": "", "versions": [], "chat": [], "picked": [], "pasted_refs": [],
     "sketch_bytes": None, "sketch_src": None, "mood": "", "mood_ver": 0,
-    "pasted_projects": [], "project_text": "",
+    "pasted_projects": [], "project_text": "", "cad_items": {},
 }.items():
     ss.setdefault(k, v)
 
@@ -715,7 +716,35 @@ with st.expander("📐 내 설계 자료 (선택) — 내 의도와 다른 내�
         if ss.pasted_projects and pp2.button("붙인 도면 비우기"):
             ss.pasted_projects = []
             st.rerun()
-        project_bytes = ([f.getvalue() for f in pfiles] if pfiles else []) + ss.pasted_projects
+        cad_files = st.file_uploader(
+            "CAD·스케치업 파일 (.dxf / .skp)", type=["dxf", "skp"], accept_multiple_files=True, key="cad_files",
+            help="DXF: 도면을 이미지로 그리고, 도면 속 글자(실명·면적·층 표기)를 설계 글에 넣어요. "
+                 "AutoCAD에서 '다른 이름으로 저장 → DXF'.\n\n"
+                 "SKP(시험 기능): 형상은 못 읽고, 파일 속 미리보기 이미지와 이름(컴포넌트·태그·장면 등)만 뽑아요.")
+        for cf in cad_files or []:
+            if cf.file_id in ss.cad_items:
+                continue
+            with st.spinner(f"{cf.name} 읽는 중..."):
+                try:
+                    if cf.name.lower().endswith(".dxf"):
+                        png, txt = cad_import.dxf_to_png_and_text(cf.getvalue())
+                        label = "도면 글자"
+                    else:
+                        png, txt = cad_import.skp_extract(cf.getvalue())
+                        label = "스케치업 이름 정보"
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"{cf.name}을(를) 읽지 못했어요: {str(e)[:150]}")
+                    ss.cad_items[cf.file_id] = {"png": None}
+                    continue
+            ss.cad_items[cf.file_id] = {"png": png}
+            if txt:
+                ss.project_text = (ss.project_text + "\n\n" if ss.project_text.strip() else "") + \
+                    f"[{label}: {cf.name}]\n{txt}"
+            if not png:
+                st.info(f"{cf.name}: 미리보기 이미지가 없어요. 스케치업에서 장면을 PNG로 내보내 넣어주세요.")
+        cad_pngs = [ss.cad_items[f.file_id]["png"] for f in cad_files or []
+                    if ss.cad_items.get(f.file_id, {}).get("png")]
+        project_bytes = ([f.getvalue() for f in pfiles] if pfiles else []) + cad_pngs + ss.pasted_projects
         if len(project_bytes) > MAX_PROJECT:
             st.warning(f"도면은 {MAX_PROJECT}장까지만 보내요 (이미지가 많으면 AI가 헷갈려요). 앞의 {MAX_PROJECT}장을 써요.")
             project_bytes = project_bytes[:MAX_PROJECT]
