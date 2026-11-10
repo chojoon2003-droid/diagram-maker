@@ -128,3 +128,37 @@ def start_login(open_url, wait: float = 60.0) -> str:
         raise RuntimeError("Claude 로그인 주소를 받지 못했어요. 명령 프롬프트에서 `claude auth login`을 직접 실행해 주세요.")
     open_url(found[0])
     return found[0]
+
+
+def qa(workdir: Path, result: str, sketch: str, refs: list[str], context_ko: str, prompt_used: str,
+       model: str = "opus", timeout: int = 900) -> dict:
+    """생성 결과 검수. 반환: {"verdict": "pass"|"revise", "issues_ko", "revision_prompt"}"""
+    exe = find_claude()
+    if not exe:
+        raise RuntimeError(SETUP_HELP)
+    request = prompts.qa_request_cli(result, sketch, refs, context_ko, prompt_used)
+    args = [exe, "-p", "--output-format", "json", "--model", model, "--allowedTools", "Read"]
+    try:
+        r = subprocess.run(args, input=request.encode("utf-8"), cwd=workdir, capture_output=True,
+                           timeout=timeout, creationflags=NO_WINDOW)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"Claude 검수가 {timeout // 60}분 안에 끝나지 않았어요.") from None
+    out = r.stdout.decode("utf-8", "replace")
+    try:
+        data = json.loads(out.strip().splitlines()[-1]) if out.strip() else {}
+    except json.JSONDecodeError:
+        data = {}
+    text = data.get("result", "") if isinstance(data, dict) else ""
+    if r.returncode != 0 or data.get("is_error") or not text:
+        raise RuntimeError("Claude 검수 실패\n\n" + (out + r.stderr.decode("utf-8", "replace"))[-1500:])
+    verdict = "revise" if "VERDICT: REVISE" in text.upper() else "pass"
+    body = text.split("\n", 1)[1] if text.upper().lstrip().startswith("VERDICT") else text
+    revision = ""
+    if prompts.REV_START in body and prompts.REV_END in body:
+        issues, rest = body.split(prompts.REV_START, 1)
+        revision = rest.split(prompts.REV_END, 1)[0].strip()
+    else:
+        issues = body
+    if verdict == "revise" and not revision:
+        verdict = "pass_with_notes"  # 문제는 적었지만 수정안을 못 받은 경우
+    return {"verdict": verdict, "issues_ko": issues.strip(), "revision_prompt": revision}

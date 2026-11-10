@@ -121,3 +121,62 @@ def review(api_key: str, model: str, effort: str, draft: str, context_ko: str,
         raise RuntimeError("Claude 응답을 해석하지 못했어요. 다시 시도해 주세요.") from None
     result["model_used"] = response.model
     return result
+
+
+QA_SYSTEM = ("You are QA-checking an AI-generated architectural diagram before it is used in a presentation.\n"
+             "Images: RESULT (to check), SKETCH (original content), REF n (style references).\n")
+QA_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "verdict": {"type": "string", "enum": ["pass", "revise"]},
+        "issues_ko": {"type": "string"},
+        "revision_prompt": {"type": "string"},
+    },
+    "required": ["verdict", "issues_ko", "revision_prompt"],
+    "additionalProperties": False,
+}
+
+
+def qa(api_key: str, model: str, effort: str, result_png: bytes, sketch: bytes, refs: list[bytes],
+       context_ko: str, prompt_used: str) -> dict:
+    """생성 결과 검수 (API). 반환: {"verdict": "pass"|"revise", "issues_ko", "revision_prompt"}"""
+    import prompts
+
+    content: list[dict] = [{"type": "text", "text": "RESULT (to check):"}, _image_block(result_png),
+                           {"type": "text", "text": "SKETCH:"}, _image_block(sketch)]
+    for i, b in enumerate(refs, 1):
+        content += [{"type": "text", "text": f"REF {i}:"}, _image_block(b)]
+    content.append({"type": "text", "text": (
+        f"{prompts.QA_CRITERIA}\n\nWrite issues_ko in Korean (numbered list, or '문제 없음'). If verdict is revise, "
+        "revision_prompt is a concise English instruction for an image model that will EDIT the result image: start "
+        "with 'Revise the attached diagram.', list concrete fixes, end with 'Keep everything else unchanged.' "
+        "Otherwise revision_prompt is an empty string.\n\n"
+        f"USER SETTINGS:\n{context_ko}\n\nPROMPT THAT WAS USED:\n{prompt_used}")})
+    params = dict(model=model, max_tokens=16000, system=QA_SYSTEM,
+                  output_config={"effort": effort, "format": {"type": "json_schema", "schema": QA_SCHEMA}},
+                  messages=[{"role": "user", "content": content}])
+    client = anthropic.Anthropic(api_key=api_key)
+    try:
+        if model in FALLBACK_MODELS:
+            response = client.beta.messages.create(**params, betas=["server-side-fallback-2026-07-01"],
+                                                   fallbacks="default")
+        else:
+            response = client.messages.create(**params)
+    except anthropic.AuthenticationError:
+        raise RuntimeError("Claude API 키가 올바르지 않아요.") from None
+    except anthropic.RateLimitError:
+        raise RuntimeError("Claude 사용 한도에 걸렸어요. 잠시 후 다시 시도하세요.") from None
+    except anthropic.APIStatusError as e:
+        raise RuntimeError(f"Claude 요청 오류: {e.message}") from None
+    except anthropic.APIConnectionError:
+        raise RuntimeError("Claude 서버에 연결하지 못했어요 (인터넷 확인).") from None
+    if response.stop_reason == "refusal":
+        raise RuntimeError("Claude가 이 검수 요청을 거절했어요.")
+    text = next((b.text for b in response.content if b.type == "text"), "")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        raise RuntimeError("Claude 검수 응답을 해석하지 못했어요.") from None
+    if data["verdict"] == "revise" and not data["revision_prompt"].strip():
+        data["verdict"] = "pass_with_notes"
+    return data

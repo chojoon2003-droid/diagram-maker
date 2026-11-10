@@ -191,6 +191,10 @@ with st.sidebar:
 
     st.divider()
     st.subheader("프롬프트 검토 (Claude)")
+    auto_qa = st.checkbox("🔎 이미지 생성 후 자동 Claude 검수", value=True,
+                          help="새 이미지가 나오면 Claude가 스케치·레퍼런스·설명과 비교해 검수해요. "
+                               "문제가 있으면 수정 프롬프트와 '다시 생성' 버튼이 나와요. "
+                               "(Claude Code 로그인 또는 Claude API 키 필요)")
     saved_c = _read(CLAUDE_KEY_FILE)
     env_c = os.getenv("ANTHROPIC_API_KEY", saved_c)
     review_mode = st.radio(
@@ -465,8 +469,8 @@ def _codex_call(prompt: str, images: list[str], note: str, session: str | None) 
                 st.code(detail[1], language=None)
         return False
     ss.codex_session, ss.codex_log = res["session_id"], res["log"]
-    add_version(res["png"], note)
-    ss.chat.append(("assistant", f"v{len(ss.versions)} 완료 ({note})."))
+    ss.chat.append(("assistant", f"v{len(ss.versions) + 1} 완료 ({note})."))
+    add_version(res["png"], note, prompt=prompt)
     return True
 
 
@@ -557,9 +561,84 @@ def send_to_chatgpt(ref_bytes: list[bytes], extra: str) -> None:
     ss.opened = bridge.open_url(url, prefer_chrome=open_target != "기본 브라우저")
 
 
-def add_version(png: bytes, note: str) -> None:
-    ss.versions.append({"png": png, "note": note})
+def add_version(png: bytes, note: str, prompt: str = "") -> None:
+    """새 버전을 목록 맨 아래에 추가 (기존 버전은 그대로). 자동 검수가 켜져 있으면 바로 Claude 검수."""
+    ss.versions.append({"png": png, "note": note, "prompt": prompt or ss.get("gpt_prompt", ""), "qa": None})
     bridge.save_output(OUT_DIR, png, len(ss.versions))
+    if auto_qa and qa_engine()[0] and ss.get("sketch_bytes"):
+        run_qa(len(ss.versions) - 1)
+
+
+# ---------------------------------------------------------------- 결과 검수 (Claude)
+def qa_engine() -> tuple[str | None, str | None]:
+    """('code', None) = Claude Code 구독 / ('api', 키) / (None, None) = 사용 불가"""
+    key = claude_key or os.getenv("ANTHROPIC_API_KEY", "") or _read(CLAUDE_KEY_FILE)
+    prefer_api = (use_codex and pipe_engine == "Claude API") or (not claude_sub and bool(claude_key))
+    if prefer_api and key:
+        return "api", key
+    if claude_code_status():
+        return "code", None
+    return ("api", key) if key else (None, None)
+
+
+def _write_work_files() -> list[str]:
+    """검수·재생성용으로 스케치/레퍼런스를 작업 폴더에 새로 씀. 레퍼런스 파일명 목록 반환."""
+    CODEX_DIR.mkdir(exist_ok=True)
+    Image.open(io.BytesIO(ss.sketch_bytes)).convert("RGB").save(CODEX_DIR / "1_sketch.png", format="PNG")
+    names = []
+    for i, b in enumerate(ref_bytes):
+        names.append(f"2_reference_{i + 1}.png")
+        Image.open(io.BytesIO(b)).convert("RGB").save(CODEX_DIR / names[-1], format="PNG")
+    return names
+
+
+def run_qa(i: int) -> bool:
+    engine, key = qa_engine()
+    if not engine:
+        st.warning("검수하려면 Claude Code 로그인(구독) 또는 Claude API 키가 필요해요.")
+        return False
+    v = ss.versions[i]
+    refs = _write_work_files()
+    result_name = f"check_v{i + 1}.png"
+    (CODEX_DIR / result_name).write_bytes(v["png"])
+    try:
+        with st.spinner(f"Claude가 v{i + 1}을(를) 검수하고 있어요... 보통 1~3분"):
+            if engine == "code":
+                res = claude_cli.qa(CODEX_DIR, result_name, "1_sketch.png", refs, review_context(),
+                                    v.get("prompt", ""), claude_cli.MODELS[cc_model])
+            else:
+                res = claude_review.qa(key, claude_review.MODELS[claude_model_label], claude_effort, v["png"],
+                                       ss.sketch_bytes, ref_bytes, review_context(), v.get("prompt", ""))
+    except RuntimeError as e:
+        st.error(f"v{i + 1} 검수 실패: {str(e).splitlines()[0]}")
+        return False
+    v["qa"] = res
+    ss[f"rev_{i}"] = res.get("revision_prompt", "")
+    return True
+
+
+def regenerate_from_qa(i: int) -> bool:
+    """검수 수정안 + 해당 이미지로 다시 생성 → 새 버전을 목록 아래에 추가."""
+    v = ss.versions[i]
+    text = (ss.get(f"rev_{i}") or (v.get("qa") or {}).get("revision_prompt", "")).strip()
+    if not text:
+        st.warning("수정 프롬프트가 비어 있어요.")
+        return False
+    note = f"v{i + 1} 검수 반영 수정본"
+    if use_codex:
+        refs = _write_work_files()
+        base = f"base_v{i + 1}.png"
+        (CODEX_DIR / base).write_bytes(v["png"])
+        prompt = (f"{text}\n\nAttached: `{base}` = the diagram to revise (edit this image); "
+                  "`1_sketch.png` = original sketch (structure reference)"
+                  + (f"; {', '.join(refs)} = style references" if refs else "") + ".\nReply in Korean.")
+        return _codex_call(prompt, [base, "1_sketch.png", *refs], note, ss.get("codex_session"))
+    if use_api:
+        with st.spinner(f"v{i + 1} 검수 수정안으로 다시 생성 중..."):
+            png = render(v["png"], ref_bytes, text)
+        add_version(png, note, prompt=text)
+        return True
+    return False
 
 
 def import_result(note: str) -> None:
@@ -825,52 +904,98 @@ with c2:
         add_version(png, "초기 생성")
         ss.chat.append(("assistant", f"v{len(ss.versions)} 생성 완료. 수정할 점을 채팅으로 알려주세요."))
 
-# ---------------------------------------------------------------- ④ 결과
+# ---------------------------------------------------------------- ④ 결과 (버전 목록: 새 버전은 아래에 추가)
 if ss.versions:
     st.divider()
     st.subheader("④ 결과 & 수정")
-    left, right = st.columns([3, 2])
-    with left:
-        idx = (st.select_slider("버전", options=list(range(len(ss.versions))), value=len(ss.versions) - 1,
-                                format_func=lambda i: f"v{i + 1}")
-               if len(ss.versions) > 1 else 0)
-        v = ss.versions[idx]
-        st.image(v["png"], caption=f"v{idx + 1} · {v['note']}", use_container_width=True)
-        e1, e2, e3, e4 = st.columns(4)
-        if e1.button("📋 복사", help="포토샵·PPT에 Ctrl+V로 바로 붙여넣기"):
-            try:
-                bridge.copy_to_clipboard(v["png"])
-                st.toast("클립보드에 복사했어요. Ctrl+V 하세요.")
-            except Exception as e:  # noqa: BLE001
-                st.error(f"복사 실패: {e}")
-        e2.download_button("PNG 저장", v["png"], f"diagram_v{idx + 1}.png", "image/png")
-        e3.download_button(
-            "PPT (전체 버전)",
-            bridge.build_pptx([(x["png"], f"v{i + 1} · {x['note']}") for i, x in enumerate(ss.versions)]),
-            "diagrams.pptx",
-            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        )
-        if e4.button("결과 폴더"):
-            bridge.open_folder(OUT_DIR)
-    with right:
-        if use_chatgpt:
-            st.markdown("**수정은 ChatGPT에서** 이어서 요청하고, 새 결과가 나올 때마다 가져오세요.")
-            note = st.text_input("메모 (선택)", placeholder="예: 매스 반투명 처리")
-            if st.button("📥 새 버전 가져오기 (클립보드)"):
-                import_result(note or "ChatGPT 수정본")
-        else:
+    h1, h2, h3 = st.columns([1, 1, 3])
+    h1.download_button(
+        "PPT (전체 버전)",
+        bridge.build_pptx([(x["png"], f"v{i + 1} · {x['note']}") for i, x in enumerate(ss.versions)]),
+        "diagrams.pptx",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    )
+    if h2.button("결과 폴더"):
+        bridge.open_folder(OUT_DIR)
+    h3.caption("새로 만든 이미지는 기존 이미지를 대체하지 않고 아래에 추가돼요.")
+    can_regen = use_codex or use_api
+
+    for i, v in enumerate(ss.versions):
+        with st.container(border=True):
+            left, right = st.columns([3, 2])
+            with left:
+                st.image(v["png"], caption=f"v{i + 1} · {v['note']}", use_container_width=True)
+                b1, b2 = st.columns(2)
+                if b1.button("📋 이미지 복사", key=f"copy_{i}", help="포토샵·PPT·ChatGPT에 Ctrl+V"):
+                    try:
+                        bridge.copy_to_clipboard(v["png"])
+                        st.toast(f"v{i + 1} 이미지를 복사했어요.")
+                    except Exception as e:  # noqa: BLE001
+                        st.error(f"복사 실패: {e}")
+                b2.download_button("PNG 저장", v["png"], f"diagram_v{i + 1}.png", "image/png", key=f"png_{i}")
+            with right:
+                st.markdown(f"#### v{i + 1}")
+                qa = v.get("qa")
+                if qa is None:
+                    st.caption("아직 Claude 검수 전이에요.")
+                    if st.button("🔎 Claude로 검수", key=f"qa_{i}", disabled=not (qa_engine()[0] and ss.sketch_bytes)):
+                        if run_qa(i):
+                            st.rerun()
+                elif qa["verdict"] == "revise":
+                    st.warning("⚠️ Claude 검수: 수정이 필요해요")
+                    st.markdown(qa["issues_ko"])
+                    st.text_area("수정 프롬프트 (직접 고칠 수 있어요)", key=f"rev_{i}", height=180)
+                    if can_regen and st.button("🔁 이 수정안으로 다시 생성 (원클릭)", key=f"regen_{i}", type="primary",
+                                                use_container_width=True):
+                        if regenerate_from_qa(i):
+                            st.rerun()
+                    c1, c2 = st.columns(2)
+                    if c1.button("📝 수정 프롬프트 복사", key=f"copyrev_{i}"):
+                        try:
+                            bridge.copy_text(ss.get(f"rev_{i}", ""))
+                            st.toast("수정 프롬프트를 복사했어요.")
+                        except Exception as e:  # noqa: BLE001
+                            st.error(f"복사 실패: {e}")
+                    if c2.button("🖼️ 이 이미지 복사", key=f"copyimg_{i}"):
+                        try:
+                            bridge.copy_to_clipboard(v["png"])
+                            st.toast("이미지를 복사했어요.")
+                        except Exception as e:  # noqa: BLE001
+                            st.error(f"복사 실패: {e}")
+                    if not can_regen:
+                        st.caption("ChatGPT 구독 모드: 이미지와 수정 프롬프트를 복사해 ChatGPT에 붙여넣고, "
+                                   "결과를 아래 '새 버전 가져오기'로 추가하세요.")
+                else:
+                    st.success("✅ Claude 검수 통과 — 이대로 써도 좋아요")
+                    if qa.get("issues_ko") and qa["issues_ko"].strip() != "문제 없음":
+                        with st.expander("검수 메모"):
+                            st.markdown(qa["issues_ko"])
+                    if st.button("🔎 다시 검수", key=f"reqa_{i}"):
+                        if run_qa(i):
+                            st.rerun()
+
+    # 자유 수정 요청 (가장 최근 버전 기준)
+    last = len(ss.versions) - 1
+    if use_chatgpt:
+        st.markdown("**수정은 ChatGPT에서** 이어서 요청하고, 새 결과가 나올 때마다 가져오세요.")
+        note = st.text_input("메모 (선택)", placeholder="예: 매스 반투명 처리")
+        if st.button("📥 새 버전 가져오기 (클립보드)"):
+            import_result(note or "ChatGPT 수정본")
+    else:
+        with st.expander("대화 기록", expanded=False):
             for role, text in ss.chat:
                 st.chat_message(role).write(text)
-            req = st.chat_input("수정 요청 (예: 2층 매스를 더 투명하게, 라벨 폰트 작게)")
-            if req:
-                ss.chat.append(("user", req))
-                if use_codex:
-                    if codex_revise(v["png"], idx, req, ref_bytes):
-                        st.rerun()
-                else:
-                    with st.spinner(f"v{idx + 1} 기준으로 수정 중..."):
-                        png = render(v["png"], ref_bytes,
-                                     f"Keep everything from IMAGE 1 unchanged except this revision: {req}")
-                    add_version(png, req)
-                    ss.chat.append(("assistant", f"v{len(ss.versions)} 완료 (v{idx + 1} 기반)."))
+        req = st.chat_input(f"v{last + 1}에 대한 수정 요청 (예: 2층 매스를 더 투명하게, 라벨 폰트 작게)")
+        if req:
+            ss.chat.append(("user", req))
+            v = ss.versions[last]
+            if use_codex:
+                if codex_revise(v["png"], last, req, ref_bytes):
                     st.rerun()
+            else:
+                with st.spinner(f"v{last + 1} 기준으로 수정 중..."):
+                    png = render(v["png"], ref_bytes,
+                                 f"Keep everything from IMAGE 1 unchanged except this revision: {req}")
+                ss.chat.append(("assistant", f"v{len(ss.versions) + 1} 완료 (v{last + 1} 기반)."))
+                add_version(png, req)
+                st.rerun()

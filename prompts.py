@@ -302,3 +302,39 @@ USER SETTINGS:
 
 DRAFT PROMPT:
 {draft}"""
+
+
+# ---------------------------------------------------------------- 결과 이미지 검수 (Claude)
+REV_START, REV_END = "=== REVISION PROMPT START ===", "=== REVISION PROMPT END ==="
+QA_CRITERIA = """Check the GENERATED result against:
+1. Structure: does it preserve the sketch (number/order/layout of steps, viewpoint, identical site boundary, key masses, voids/courtyards, arrows, text)?
+2. Goal: does it communicate the diagram goal in the user settings?
+3. Style: does it follow the references' graphic language (accent colors, line weights, fills, labels, arrows, entourage) and avoid elements the references do not use (titles, legends, extra strips) when the style strength asks for that?
+4. Quality: garbled or misspelled text, broken geometry, artifacts, missing or duplicated parts, inconsistent color meaning.
+Only flag problems that clearly matter for a presentation diagram. If it is good enough, PASS."""
+
+
+def qa_request_cli(result: str, sketch: str, refs: list[str], context_ko: str, prompt_used: str) -> str:
+    files = (f"- {result} = GENERATED RESULT (to check)\n- {sketch} = original SKETCH\n"
+             + "".join(f"- {r} = STYLE REFERENCE {i}\n" for i, r in enumerate(refs, 1)))
+    return f"""You are QA-checking an AI-generated architectural diagram before it is used in a presentation.
+The images are files in the current directory. Use the Read tool to look at EVERY one of them:
+{files}
+{QA_CRITERIA}
+
+OUTPUT FORMAT (exactly):
+Line 1: VERDICT: PASS   or   VERDICT: REVISE
+Then, in Korean, a short numbered list of the problems found (most important first), or "문제 없음".
+If REVISE, then a concise English revision instruction for an image model that will EDIT the generated result image
+(it will receive the result, the sketch and the references). Start with "Revise the attached diagram {result}." list the
+concrete fixes, and end with "Keep everything else unchanged." Put it between these marker lines:
+{REV_START}
+...revision instruction...
+{REV_END}
+Do not edit or create any files.
+
+USER SETTINGS:
+{context_ko}
+
+PROMPT THAT WAS USED TO GENERATE IT:
+{prompt_used}"""
