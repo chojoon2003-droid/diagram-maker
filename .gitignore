@@ -1,0 +1,9 @@
+api_key.txt
+.installed
+__pycache__/
+outputs/
+inbox/
+to_chatgpt/
+gemini_key.txt
+claude_key.txt
+to_codex/
