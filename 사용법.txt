@@ -1,5 +1,21 @@
 건축 다이어그램 에이전트 - 사용법
 
+[다른 컴퓨터에서 받기 (git)]  저장소: https://github.com/chojoon2003-droid/diagram-maker (비공개)
+처음 한 번:
+ 1. 명령 프롬프트(cmd) 열기 (시작 메뉴에서 cmd 검색)
+ 2. 저장할 위치로 이동:  cd %USERPROFILE%\Documents
+ 3. 받기:  git clone https://github.com/chojoon2003-droid/diagram-maker.git
+ 4. 처음엔 GitHub 로그인 창이 떠요 -> "Sign in with your browser" -> 본인 GitHub 계정으로 로그인
+    (로그인 정보가 저장돼서 다음부터는 안 물어봐요)
+ 5. 문서\diagram-maker 폴더가 생겨요 -> 아래 [처음 한 번만] 진행
+업데이트 받기 (코드가 바뀌었을 때):
+ 1. cd %USERPROFILE%\Documents\diagram-maker
+ 2. git pull
+ - API 키 파일, outputs 등 결과물은 git이 관리하지 않아서 업데이트해도 그대로 남아요.
+ - 폴더 안의 코드 파일을 직접 고쳤다면 git pull이 멈출 수 있어요.
+git 없이 받기: 저장소 페이지 -> 초록색 Code 버튼 -> Download ZIP -> 압축 풀기
+새 컴퓨터에서는 API 키를 앱 사이드바에 다시 넣고 저장하세요 (키는 저장소에 올라가지 않아요).
+
 [처음 한 번만]
 1. 파이썬 설치: https://www.python.org/downloads/
    설치 첫 화면에서 "Add python.exe to PATH" 체크 후 Install Now
@@ -14,9 +30,11 @@
 [ChatGPT 구독 모드 사용 순서]  (API 키 필요 없음)
 1. 레퍼런스: 이미지 넣기 / 원하는 느낌 쓰기 / 추천 키워드 클릭
 2. 스케치: 클립보드 / 폴더 / 파일 중 하나로 불러오기
-3. "① 프롬프트 복사 + 이미지 준비 + ChatGPT 열기" 클릭
-   -> 프롬프트 자동 복사, to_chatgpt 폴더 열림, ChatGPT 열림
-4. to_chatgpt 폴더의 이미지 전부를 ChatGPT 입력창에 끌어다 놓고 Ctrl+V, 전송
+3. "🚀 ChatGPT로 보내기" 클릭
+   -> 크롬에서 ChatGPT가 열리고 입력창에 프롬프트가 미리 채워짐, 이미지는 클립보드에 복사됨
+4. ChatGPT 입력창 클릭 -> Ctrl+V (이미지 첨부) -> Enter
+   (프롬프트가 안 채워졌으면 앱의 "📝 프롬프트 복사" -> Ctrl+V -> "🖼️ 이미지 다시 복사" -> Ctrl+V)
+   (이미지가 안 붙으면 사이드바 '이미지 첨부 방식'을 '한 장으로 합치기'로)
 5. 수정은 ChatGPT에 말로 요청
 6. 마음에 드는 결과: ChatGPT 이미지 우클릭 > 이미지 복사 > 앱에서 "결과 가져오기"
 7. 가져온 버전들은 복사(포토샵/PPT에 Ctrl+V), PNG, PPT로 내보내기 가능

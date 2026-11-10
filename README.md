@@ -4,8 +4,21 @@
 프롬프트 작성 → Claude 검토 → OpenAI(Codex / GPT-6 Astra)로 다이어그램 이미지 생성까지 한 번에 진행하는 로컬 앱.
 
 ## 다른 컴퓨터에서 받기
-- **가장 쉬움**: GitHub 저장소 페이지 → 초록색 **Code** 버튼 → **Download ZIP** → 압축 풀기
-- **git 사용 시**: `git clone <저장소 주소>` → 이후 업데이트는 폴더에서 `git pull`
+**git 사용 (추천)** — 명령 프롬프트(cmd)에서:
+```bat
+cd %USERPROFILE%\Documents
+git clone https://github.com/chojoon2003-droid/diagram-maker.git
+```
+처음엔 GitHub 로그인 창이 떠요 → **Sign in with your browser** → 본인 계정으로 로그인.
+
+**업데이트 받기**:
+```bat
+cd %USERPROFILE%\Documents\diagram-maker
+git pull
+```
+API 키 파일과 결과물(`outputs/`)은 git이 관리하지 않아 업데이트해도 그대로 남아요.
+
+**git 없이**: 저장소 페이지 → 초록색 **Code** 버튼 → **Download ZIP** → 압축 풀기
 
 ## 처음 실행
 자세한 내용은 [`사용법.txt`](사용법.txt) 참고.
