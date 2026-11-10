@@ -36,6 +36,46 @@ THINK_KO = {
 }
 
 
+def project_names(n: int) -> str:
+    return ", ".join(f"3_project_{i}.png" for i in range(1, n + 1))
+
+
+def has_facts(s: "Spec") -> bool:
+    return bool(s.project_text.strip() or s.n_project)
+
+
+def facts_en(s: "Spec") -> str:
+    if not has_facts(s):
+        return ""
+    lines = ["PROJECT FACTS — my own design documents; they are the source of truth for CONTENT:"]
+    if s.n_project:
+        lines.append(f"- {project_names(s.n_project)} = MY DESIGN DRAWINGS/DIAGRAMS of this project "
+                     "(read content from them; do NOT copy their graphic style)")
+    if s.project_text.strip():
+        lines.append("- Program & design logic (user's words, Korean):\n" + s.project_text.strip()[:3000])
+    if s.facts_strict:
+        lines.append("- RULE: use only programs, space/zone names, numbers, areas, floor counts, labels and design moves "
+                     "that appear in the sketch or these documents. Do NOT invent new programs, labels, numbers, "
+                     "annotations or design moves. If something is unclear, leave it out instead of guessing.")
+    else:
+        lines.append("- Keep the content consistent with these documents; never contradict them.")
+    return "\n".join(lines)
+
+
+def facts_ko(s: "Spec") -> str:
+    if not has_facts(s):
+        return ""
+    lines = ["[내 설계 자료 — 내용의 기준]"]
+    if s.n_project:
+        lines.append(f"- {project_names(s.n_project)} = 이 프로젝트의 내 설계 도면/다이어그램 (내용만 참고, 그래픽 스타일은 따라하지 말 것)")
+    if s.project_text.strip():
+        lines.append("- 프로그램·설계 논리:\n" + s.project_text.strip()[:3000])
+    lines.append("- 규칙: 스케치나 설계 자료에 있는 프로그램·공간 이름·숫자·면적·층수·라벨·설계 행위만 사용. "
+                 "없는 내용을 지어내지 말고, 불확실하면 빼줘." if s.facts_strict
+                 else "- 이 자료와 내용이 어긋나지 않게 할 것.")
+    return "\n".join(lines)
+
+
 def ref_names(n: int) -> str:
     return ", ".join(f"2_reference_{i}.png" for i in range(1, n + 1))
 
@@ -61,6 +101,9 @@ class Spec:
     think: str = "자동"
     extra: str = ""
     style_strength: str = "균형"  # 구조 우선 / 균형 / 스타일 우선
+    project_text: str = ""  # 내 설계의 프로그램·설계 논리 글
+    n_project: int = 0  # 첨부하는 내 설계 도면/다이어그램 장수
+    facts_strict: bool = True  # 설계 자료에 없는 내용 추가 금지
 
 
 STRENGTH_EN = {
@@ -145,6 +188,10 @@ def chatgpt_en(s: Spec, n_refs: int, board: bool) -> str:
                   f"- {ref_names(n_refs)} = STYLE references only — never copy their buildings or content")
     else:
         images = "- 1_sketch.png = CONTENT to draw (rough hand sketch or 3D model screenshot). No reference images."
+    if s.n_project and board:
+        images += " Panels labeled 'PROJECT n = FACTS' are my own design drawings: content facts only."
+    elif s.n_project:
+        images += f"\n- {project_names(s.n_project)} = MY DESIGN DRAWINGS (content facts only, not style)"
     aspect = f" Aspect ratio: {ASPECT_EN[s.aspect]}." if ASPECT_EN.get(s.aspect) else ""
     think = f"\n{THINK_EN[s.think]}" if THINK_EN.get(s.think) else ""
     steps = (
@@ -163,6 +210,7 @@ ATTACHED
 
 PRIORITY 1 — what the diagram must communicate (overrides style):
 {goal_en(s)}
+{facts_en(s)}
 
 PRIORITY 2 — structure:
 {structure_en(s)}
@@ -189,6 +237,10 @@ def chatgpt_ko(s: Spec, n_refs: int, board: bool) -> str:
                   f"- {ref_names(n_refs)} = 스타일 레퍼런스 (형태는 절대 복사하지 말 것)")
     else:
         images = "- 1_sketch.png = 그릴 내용 (손스케치 / 3D 캡처). 레퍼런스 이미지는 없음."
+    if s.n_project and board:
+        images += " 'PROJECT n = FACTS' 칸은 내 설계 도면: 내용의 기준으로만 사용."
+    elif s.n_project:
+        images += f"\n- {project_names(s.n_project)} = 내 설계 도면 (내용의 기준, 스타일 아님)"
     goal = "\n".join(x for x in [
         f"- 유형: {', '.join(s.types)}" if s.types else "",
         f"- 설명: {s.goal}" if s.goal else "",
@@ -214,6 +266,7 @@ def chatgpt_ko(s: Spec, n_refs: int, board: bool) -> str:
 
 [1순위 · 어떤 다이어그램인지 — 스타일보다 우선]
 {goal}
+{facts_ko(s)}
 
 [2순위 · 구조] {rule}
 
@@ -229,15 +282,20 @@ def chatgpt_ko(s: Spec, n_refs: int, board: bool) -> str:
 
 
 # ---------------------------------------------------------------- API 이미지 모델 (영어)
-def image_api(s: Spec, has_refs: bool, task: str) -> str:
-    refs = ("IMAGE 2+ = style references ONLY. Never copy their buildings or content."
-            if has_refs else "No reference images; follow the style text.")
+def image_api(s: Spec, n_refs: int, task: str) -> str:
+    rng = lambda a, b: f"{a}" if a == b else f"{a}–{b}"  # noqa: E731
+    refs = (f"IMAGE {rng(2, n_refs + 1)} = style references ONLY. Never copy their buildings or content."
+            if n_refs else "No reference images; follow the style text.")
+    if s.n_project:
+        refs += (f"\nIMAGE {rng(n_refs + 2, n_refs + 1 + s.n_project)} = MY DESIGN DRAWINGS of this project: "
+                 "content facts only, not style.")
     return f"""You are making an architectural diagram.
 IMAGE 1 = the content to draw (rough sketch, 3D model screenshot, or a previous version).
 {refs}
 
 PRIORITY 1 — what this diagram must communicate (overrides style):
 {goal_en(s)}
+{facts_en(s).replace(project_names(s.n_project), "the design drawings") if s.n_project else facts_en(s)}
 
 PRIORITY 2 — structure:
 {structure_en(s)}
@@ -250,11 +308,13 @@ Task: {task}
 
 
 # ---------------------------------------------------------------- Claude(구독)에게 보낼 검토 요청
-def claude_review_request(draft: str, context_ko: str, n_refs: int, board: bool) -> str:
+def claude_review_request(draft: str, context_ko: str, n_refs: int, board: bool, n_project: int = 0) -> str:
     if board:
-        att = "ONE board image: left panel 'SKETCH' = content to draw, right panels 'REF n' = style references."
+        att = ("ONE board image: left panel 'SKETCH' = content to draw, right panels 'REF n' = style references"
+               + (", 'PROJECT n' panels = my design drawings (content facts)." if n_project else "."))
     else:
-        att = f"Image 1 = SKETCH (content to draw)" + (f", images 2–{n_refs + 1} = style REFERENCES." if n_refs else ". No references.")
+        att = f"Image 1 = SKETCH (content to draw)" + (f", images 2–{n_refs + 1} = style REFERENCES" if n_refs else "")
+        att += (f", images {n_refs + 2}–{n_refs + 1 + n_project} = MY DESIGN DRAWINGS (content facts)." if n_project else ".")
     return f"""Act as a senior architectural-diagram art director and prompt engineer.
 I will paste the images right after this message. If they are not attached yet, reply only "이미지를 첨부해 주세요" and wait.
 Attached: {att}
@@ -263,6 +323,7 @@ Review the DRAFT prompt below (it will be pasted into ChatGPT together with the 
 1. Read the sketch: list what must be preserved (number/order/layout of steps, viewpoint, site boundary, key masses, voids/courtyards, arrows, text) and add them as explicit constraints.
 2. Read the references: extract the concrete graphic language (accent colors as hex, line weights, fills, label typography/layout, arrow types, tree/people style, background, and elements they do NOT use such as titles or legends) and add precise rules.
 3. Fix conflicts between the goal, keywords, mood, style strength and references; remove vague or redundant wording.
+4. If project documents are given (my design drawings and/or program text): extract the FACTS (program and space names, numbers, areas, floor counts, labels, key design logic), state the ones the diagram needs in the prompt, and remove or correct anything that contradicts them or is not supported by them.
 Keep the draft's language, its attachment description, its missing-image guard lines and the "reply in Korean" line. Keep it under ~2,500 characters. Do not invent design content.
 
 Answer in Korean: first a short list of the problems you found (most important first), then the improved prompt inside ONE code block (```) so I can copy it.
@@ -278,9 +339,11 @@ DRAFT PROMPT:
 MARK_START, MARK_END = "=== IMPROVED PROMPT START ===", "=== IMPROVED PROMPT END ==="
 
 
-def claude_cli_request(draft: str, context_ko: str, sketch: str, refs: list[str]) -> str:
+def claude_cli_request(draft: str, context_ko: str, sketch: str, refs: list[str],
+                       projects: list[str] | None = None) -> str:
     files = f"- {sketch} = SKETCH (content to draw)\n" + "".join(f"- {r} = REFERENCE {i} (style only)\n"
                                                               for i, r in enumerate(refs, 1))
+    files += "".join(f"- {p} = MY DESIGN DRAWING {i} (content facts)\n" for i, p in enumerate(projects or [], 1))
     return f"""Act as a senior architectural-diagram art director and prompt engineer.
 The images are files in the current directory. Use the Read tool to look at EVERY one of them before reviewing:
 {files}
@@ -288,6 +351,7 @@ Review the DRAFT prompt below. It will be sent to ChatGPT/Codex (image generatio
 1. Read the sketch: list what must be preserved (number/order/layout of steps, viewpoint, site boundary, key masses, voids/courtyards, arrows, text) and add them as explicit constraints.
 2. Read the references: extract the concrete graphic language (accent colors as hex, line weights, fills, label typography/layout, arrow types, tree/people style, background, and elements they do NOT use such as titles or legends) and add precise rules.
 3. Fix conflicts between the goal, keywords, mood, style strength and references; remove vague or redundant wording.
+4. If project documents are given (my design drawings and/or program text): extract the FACTS (program and space names, numbers, areas, floor counts, labels, key design logic), state the ones the diagram needs in the prompt, and remove or correct anything that contradicts them or is not supported by them.
 Keep the draft's language, its attachment description (file names), and the "reply in Korean" line. Keep it under ~2,500 characters. Do not invent design content. Do not edit or create any files.
 
 OUTPUT FORMAT (exactly):
@@ -311,12 +375,15 @@ QA_CRITERIA = """Check the GENERATED result against:
 2. Goal: does it communicate the diagram goal in the user settings?
 3. Style: does it follow the references' graphic language (accent colors, line weights, fills, labels, arrows, entourage) and avoid elements the references do not use (titles, legends, extra strips) when the style strength asks for that?
 4. Quality: garbled or misspelled text, broken geometry, artifacts, missing or duplicated parts, inconsistent color meaning.
+5. Facts: if project documents are given, every program/space name, number, floor count, label and design move in the result must be supported by them or the sketch. Flag anything invented or contradicting them.
 Only flag problems that clearly matter for a presentation diagram. If it is good enough, PASS."""
 
 
-def qa_request_cli(result: str, sketch: str, refs: list[str], context_ko: str, prompt_used: str) -> str:
+def qa_request_cli(result: str, sketch: str, refs: list[str], context_ko: str, prompt_used: str,
+                   projects: list[str] | None = None) -> str:
     files = (f"- {result} = GENERATED RESULT (to check)\n- {sketch} = original SKETCH\n"
-             + "".join(f"- {r} = STYLE REFERENCE {i}\n" for i, r in enumerate(refs, 1)))
+             + "".join(f"- {r} = STYLE REFERENCE {i}\n" for i, r in enumerate(refs, 1))
+             + "".join(f"- {p} = MY DESIGN DRAWING {i} (content facts)\n" for i, p in enumerate(projects or [], 1)))
     return f"""You are QA-checking an AI-generated architectural diagram before it is used in a presentation.
 The images are files in the current directory. Use the Read tool to look at EVERY one of them:
 {files}

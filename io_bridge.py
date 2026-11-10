@@ -217,22 +217,24 @@ def copy_files(paths: list[Path]) -> None:
         raise RuntimeError("이 운영체제에서는 파일 복사를 지원하지 않아요.")
 
 
-def make_board(sketch: bytes, refs: list[bytes]) -> bytes:
-    """스케치(왼쪽, 크게) + 레퍼런스(오른쪽, 작게)를 라벨과 함께 한 장으로 합침."""
+def make_board(sketch: bytes, refs: list[bytes], projects: list[bytes] | None = None) -> bytes:
+    """스케치(왼쪽, 크게) + 레퍼런스·내 설계 도면(오른쪽, 작게)을 라벨과 함께 한 장으로 합침."""
+    side = [(b, f"REF {i} = STYLE ONLY", "blue") for i, b in enumerate(refs, 1)]
+    side += [(b, f"PROJECT {i} = FACTS", "green") for i, b in enumerate(projects or [], 1)]
     from PIL import ImageDraw, ImageFont
 
     H, gap, label_h = 1400, 24, 56
     sk = Image.open(io.BytesIO(sketch)).convert("RGB")
     sk = sk.resize((max(1, int(sk.width * H / sk.height)), H))
-    col_w = 600 if refs else 0
+    col_w = 600 if side else 0
     ref_imgs = []
-    if refs:
-        slot_h = (H - gap * (len(refs) - 1)) // len(refs) - label_h
-        for b in refs:
+    if side:
+        slot_h = (H - gap * (len(side) - 1)) // len(side) - label_h
+        for b, label, color in side:
             im = Image.open(io.BytesIO(b)).convert("RGB")
             im.thumbnail((col_w, max(80, slot_h)))
-            ref_imgs.append(im)
-    W = sk.width + (gap + col_w if refs else 0)
+            ref_imgs.append((im, label, color))
+    W = sk.width + (gap + col_w if side else 0)
     board = Image.new("RGB", (W + 2 * gap, H + label_h + 2 * gap), "white")
     d = ImageDraw.Draw(board)
     try:
@@ -242,8 +244,8 @@ def make_board(sketch: bytes, refs: list[bytes]) -> bytes:
     d.text((gap, gap), "SKETCH = CONTENT", fill="red", font=font)
     board.paste(sk, (gap, gap + label_h))
     y, x = gap, gap + sk.width + gap
-    for i, im in enumerate(ref_imgs, 1):
-        d.text((x, y), f"REF {i} = STYLE ONLY", fill="blue", font=font)
+    for im, label, color in ref_imgs:
+        d.text((x, y), label, fill=color, font=font)
         board.paste(im, (x, y + label_h))
         y += label_h + im.height + gap
     buf = io.BytesIO()
@@ -282,3 +284,24 @@ def notify(title: str, body: str, image: Path | None = None) -> None:
             subprocess.Popen(["notify-send", title, body])
     except Exception:  # noqa: BLE001
         pass
+
+
+# ------------------------------------------------------------------ 설계 글 파일에서 텍스트 추출
+def extract_text(name: str, data: bytes) -> str:
+    """.txt/.md/.pdf/.docx 에서 글자만 뽑는다 (설계 논리·프로그램 설명용)."""
+    low = name.lower()
+    if low.endswith(".pdf"):
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(data))
+        return "\n".join((p.extract_text() or "") for p in reader.pages).strip()
+    if low.endswith(".docx"):
+        import docx
+
+        return "\n".join(p.text for p in docx.Document(io.BytesIO(data)).paragraphs).strip()
+    for enc in ("utf-8", "cp949", "euc-kr"):
+        try:
+            return data.decode(enc).strip()
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", "replace").strip()

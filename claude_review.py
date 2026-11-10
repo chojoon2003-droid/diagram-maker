@@ -32,6 +32,7 @@ Check in particular:
 2. Reference style: extract the concrete graphic language (accent colors as hex, line weights, fills, label typography and layout, arrow types, tree/people style, background, what elements are ABSENT such as titles or legends). Put it into the prompt as precise rules.
 3. Conflicts: contradictions between the diagram goal, keywords, mood text, style strength and the references (e.g. color meaning inconsistencies, elements the reference never uses). Resolve them following the draft's stated priorities.
 4. Vague or redundant wording; anything ChatGPT is likely to misread.
+5. Project facts: if MY DESIGN DRAWINGS and/or program text are given, extract the facts (program and space names, numbers, areas, floor counts, labels, design logic), state the ones the diagram needs, and remove anything that contradicts them or is not supported by them.
 Rules for the improved prompt:
 - Keep the draft's language (English draft -> English prompt). Keep the user's Korean quotes as quotes.
 - Keep the attachment description consistent with how images are attached (separate files or one labeled board), the missing-image guard lines, and the instruction to reply in Korean.
@@ -74,11 +75,13 @@ def _image_block(data: bytes) -> dict:
 
 
 def review(api_key: str, model: str, effort: str, draft: str, context_ko: str,
-           sketch: bytes, refs: list[bytes]) -> dict:
+           sketch: bytes, refs: list[bytes], projects: list[bytes] | None = None) -> dict:
     """반환: SCHEMA 형태의 dict (+ 'model_used'). 실패 시 RuntimeError(한국어 메시지)."""
     content: list[dict] = [{"type": "text", "text": "SKETCH (content to draw):"}, _image_block(sketch)]
     for i, b in enumerate(refs, 1):
         content += [{"type": "text", "text": f"REF {i} (style only):"}, _image_block(b)]
+    for i, b in enumerate(projects or [], 1):
+        content += [{"type": "text", "text": f"MY DESIGN DRAWING {i} (content facts, not style):"}, _image_block(b)]
     content.append({"type": "text", "text": f"USER SETTINGS (Korean):\n{context_ko}\n\nDRAFT PROMPT:\n<<<\n{draft}\n>>>"})
 
     params = dict(
@@ -138,7 +141,7 @@ QA_SCHEMA = {
 
 
 def qa(api_key: str, model: str, effort: str, result_png: bytes, sketch: bytes, refs: list[bytes],
-       context_ko: str, prompt_used: str) -> dict:
+       context_ko: str, prompt_used: str, projects: list[bytes] | None = None) -> dict:
     """생성 결과 검수 (API). 반환: {"verdict": "pass"|"revise", "issues_ko", "revision_prompt"}"""
     import prompts
 
@@ -146,6 +149,8 @@ def qa(api_key: str, model: str, effort: str, result_png: bytes, sketch: bytes, 
                            {"type": "text", "text": "SKETCH:"}, _image_block(sketch)]
     for i, b in enumerate(refs, 1):
         content += [{"type": "text", "text": f"REF {i}:"}, _image_block(b)]
+    for i, b in enumerate(projects or [], 1):
+        content += [{"type": "text", "text": f"MY DESIGN DRAWING {i} (content facts):"}, _image_block(b)]
     content.append({"type": "text", "text": (
         f"{prompts.QA_CRITERIA}\n\nWrite issues_ko in Korean (numbered list, or '문제 없음'). If verdict is revise, "
         "revision_prompt is a concise English instruction for an image model that will EDIT the result image: start "

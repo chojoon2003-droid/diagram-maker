@@ -5,3 +5,5 @@ pillow
 python-pptx
 google-genai
 streamlit-keyup
+pypdf
+python-docx

@@ -40,12 +40,12 @@ def claude_version() -> str:
 
 
 def review(workdir: Path, draft: str, context_ko: str, sketch: str, refs: list[str],
-           model: str = "opus", timeout: int = 900) -> dict:
+           model: str = "opus", timeout: int = 900, projects: list[str] | None = None) -> dict:
     """반환: {"improved_prompt", "summary_ko", "log"} — 실패 시 RuntimeError(한국어)."""
     exe = find_claude()
     if not exe:
         raise RuntimeError(SETUP_HELP)
-    request = prompts.claude_cli_request(draft, context_ko, sketch, refs)
+    request = prompts.claude_cli_request(draft, context_ko, sketch, refs, projects)
     args = [exe, "-p", "--output-format", "json", "--model", model, "--allowedTools", "Read"]
     try:
         r = subprocess.run(args, input=request.encode("utf-8"), cwd=workdir, capture_output=True,
@@ -131,12 +131,12 @@ def start_login(open_url, wait: float = 60.0) -> str:
 
 
 def qa(workdir: Path, result: str, sketch: str, refs: list[str], context_ko: str, prompt_used: str,
-       model: str = "opus", timeout: int = 900) -> dict:
+       model: str = "opus", timeout: int = 900, projects: list[str] | None = None) -> dict:
     """생성 결과 검수. 반환: {"verdict": "pass"|"revise", "issues_ko", "revision_prompt"}"""
     exe = find_claude()
     if not exe:
         raise RuntimeError(SETUP_HELP)
-    request = prompts.qa_request_cli(result, sketch, refs, context_ko, prompt_used)
+    request = prompts.qa_request_cli(result, sketch, refs, context_ko, prompt_used, projects)
     args = [exe, "-p", "--output-format", "json", "--model", model, "--allowedTools", "Read"]
     try:
         r = subprocess.run(args, input=request.encode("utf-8"), cwd=workdir, capture_output=True,

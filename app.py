@@ -58,6 +58,7 @@ ss = st.session_state
 for k, v in {
     "style_guide": "", "versions": [], "chat": [], "picked": [], "pasted_refs": [],
     "sketch_bytes": None, "sketch_src": None, "mood": "", "mood_ver": 0,
+    "pasted_projects": [], "project_text": "",
 }.items():
     ss.setdefault(k, v)
 
@@ -336,13 +337,26 @@ def spec(extra: str = "") -> prompts.Spec:
         types=list(ss.get("diagram_types") or []), goal=ss.get("diagram_goal", ""), mood=ss.mood,
         keywords=list(ss.picked), style_guide=ss.style_guide, strict=fidelity.startswith("엄격"),
         quality=quality_label, aspect=aspect, think=think, extra=extra, style_strength=style_strength,
+        project_text=ss.get("project_text", ""), n_project=len(project_bytes),
+        facts_strict=ss.get("facts_strict", True),
     )
+
+
+def project_items() -> list[tuple[str, bytes]]:
+    return [(f"3_project_{i + 1}.png", b) for i, b in enumerate(project_bytes)]
+
+
+def attach_items(ref_bytes: list[bytes]) -> list[tuple[str, bytes]]:
+    """첨부 순서: 스케치 → 레퍼런스 → 내 설계 도면"""
+    return ([("1_sketch.png", ss.sketch_bytes)] + [(f"2_reference_{i + 1}.png", b) for i, b in enumerate(ref_bytes)]
+            + project_items())
 
 
 # ---------------------------------------------------------------- API 모드 생성
 def render(base_png: bytes, ref_bytes: list[bytes], instruction: str) -> bytes:
-    prompt = prompts.image_api(spec(), bool(ref_bytes), instruction)
-    files = [to_png_file(base_png, "base.png")] + [to_png_file(b, f"ref{i}.png") for i, b in enumerate(ref_bytes)]
+    prompt = prompts.image_api(spec(), len(ref_bytes), instruction)
+    files = ([to_png_file(base_png, "base.png")] + [to_png_file(b, f"ref{i}.png") for i, b in enumerate(ref_bytes)]
+             + [to_png_file(b, f"project{i}.png") for i, b in enumerate(project_bytes)])
     kwargs = dict(model=image_model, image=files, prompt=prompt,
                   size=ASPECT[aspect], quality=QUALITY[quality_label][0])
     client = OpenAI(api_key=api_key)
@@ -376,7 +390,9 @@ def review_context() -> str:
         f"- 선택 키워드: {', '.join(ss.picked) or '없음'}",
         f"- 스케치 구조 유지: {fidelity} / 레퍼런스 스타일 강도: {style_strength}",
         f"- 이미지 첨부 방식: {attach_mode} / 화질: {quality_label} / 비율: {aspect} / 생각 수준: {think}",
-    ])
+        f"- 내 설계 자료: 도면 {len(project_bytes)}장, 설계 글 {'있음' if ss.get('project_text', '').strip() else '없음'}"
+        f" / 없는 내용 추가 금지: {'예' if ss.get('facts_strict', True) else '아니오'}",
+    ] + ([f"- 프로그램·설계 논리 (내 글):\n{ss.project_text.strip()[:3000]}"] if ss.get("project_text", "").strip() else []))
 
 
 def run_review(ref_bytes: list[bytes], draft: str) -> None:
@@ -384,7 +400,7 @@ def run_review(ref_bytes: list[bytes], draft: str) -> None:
     try:
         with st.spinner(f"Claude({claude_model_label})가 스케치·레퍼런스를 보며 검토 중... (30초~2분)"):
             result = claude_review.review(claude_key, model, claude_effort, draft, review_context(),
-                                          ss.sketch_bytes, ref_bytes)
+                                          ss.sketch_bytes, ref_bytes, project_bytes)
         ss.review = {"draft": draft, **result}
         ss.reviewed_text = result["improved_prompt"]
     except RuntimeError as e:
@@ -393,10 +409,9 @@ def run_review(ref_bytes: list[bytes], draft: str) -> None:
 
 def prepare_attachments(ref_bytes: list[bytes]) -> None:
     """to_chatgpt 폴더에 첨부 이미지를 만들고 클립보드에 복사 (ChatGPT·Claude 공용)."""
-    bridge.write_images(TO_GPT_DIR, [("1_sketch.png", ss.sketch_bytes)]
-                        + [(f"2_reference_{i + 1}.png", b) for i, b in enumerate(ref_bytes)])
+    bridge.write_images(TO_GPT_DIR, attach_items(ref_bytes))
     if attach_mode == "한 장으로 합치기":
-        (TO_GPT_DIR / "board.png").write_bytes(bridge.make_board(ss.sketch_bytes, ref_bytes))
+        (TO_GPT_DIR / "board.png").write_bytes(bridge.make_board(ss.sketch_bytes, ref_bytes, project_bytes))
     try:
         copy_attachments()
         ss.clip_ok = True
@@ -412,7 +427,7 @@ def prepare_attachments(ref_bytes: list[bytes]) -> None:
 def send_to_claude(ref_bytes: list[bytes], draft: str) -> None:
     """Claude(구독)를 열고 검토 요청을 미리 채움. 이미지는 클립보드에."""
     request = prompts.claude_review_request(draft, review_context(), len(ref_bytes),
-                                            attach_mode == "한 장으로 합치기")
+                                            attach_mode == "한 장으로 합치기", n_project=len(project_bytes))
     ss.claude_request, ss.claude_draft = request, draft
     prepare_attachments(ref_bytes)
     ss.claude_prefilled = False
@@ -482,15 +497,16 @@ def _codex_call(prompt: str, images: list[str], note: str, session: str | None) 
 def codex_generate(ref_bytes: list[bytes], extra: str) -> None:
     prompt = final_prompt(chatgpt_prompt(len(ref_bytes), extra))
     ss.gpt_prompt = prompt
-    bridge.write_images(CODEX_DIR, [("1_sketch.png", ss.sketch_bytes)]
-                        + [(f"2_reference_{i + 1}.png", b) for i, b in enumerate(ref_bytes)])
-    _codex_call(prompt, ["1_sketch.png", *_codex_refs(ref_bytes)], "Codex 생성", None)
+    items = attach_items(ref_bytes)
+    bridge.write_images(CODEX_DIR, items)
+    _codex_call(prompt, [n for n, _ in items], "Codex 생성", None)
 
 
 def run_pipeline(ref_bytes: list[bytes], extra: str, draft: str) -> None:
     """원클릭: 초안 → Claude 검토 → Codex(Astra) 이미지 생성 → 결과 등록."""
     refs = [f"2_reference_{i + 1}.png" for i in range(len(ref_bytes))]
-    bridge.write_images(CODEX_DIR, [("1_sketch.png", ss.sketch_bytes)] + list(zip(refs, ref_bytes)))
+    projs = [n for n, _ in project_items()]
+    bridge.write_images(CODEX_DIR, attach_items(ref_bytes))
     prompt = draft
     with st.status("🤖 전체 자동 진행 중...", expanded=True) as status:
         st.write("✅ ① 프롬프트 초안 작성 완료")
@@ -499,7 +515,7 @@ def run_pipeline(ref_bytes: list[bytes], extra: str, draft: str) -> None:
             try:
                 if pipe_engine.startswith("Claude Code"):
                     res = claude_cli.review(CODEX_DIR, draft, review_context(), "1_sketch.png", refs,
-                                            claude_cli.MODELS[cc_model])
+                                            claude_cli.MODELS[cc_model], projects=projs)
                     ss.review = {"draft": draft, "summary_ko": res["summary_ko"], "issues": [],
                                  "sketch_reading_ko": "", "reference_style_ko": "",
                                  "improved_prompt": res["improved_prompt"], "model_used": "Claude Code (구독)"}
@@ -508,7 +524,7 @@ def run_pipeline(ref_bytes: list[bytes], extra: str, draft: str) -> None:
                     if not key:
                         raise RuntimeError("Claude API 키가 없어요. 사이드바 '프롬프트 검토'에서 키를 넣어주세요.")
                     result = claude_review.review(key, claude_review.MODELS[claude_model_label], claude_effort,
-                                                  draft, review_context(), ss.sketch_bytes, ref_bytes)
+                                                  draft, review_context(), ss.sketch_bytes, ref_bytes, project_bytes)
                     ss.review = {"draft": draft, **result}
                 ss.reviewed_text = ss.review["improved_prompt"]
                 prompt = ss.reviewed_text
@@ -517,7 +533,7 @@ def run_pipeline(ref_bytes: list[bytes], extra: str, draft: str) -> None:
                 st.write(f"⚠️ ② Claude 검토 실패 → 초안 그대로 진행: {str(e).splitlines()[0]}")
         ss.gpt_prompt = prompt
         st.write(f"⏳ ③ Codex({codex_model})로 다이어그램 생성 중... 보통 1~5분")
-        ok = _codex_call(prompt, ["1_sketch.png", *refs], "원클릭 자동 생성", None)
+        ok = _codex_call(prompt, ["1_sketch.png", *refs, *projs], "원클릭 자동 생성", None)
         if ok:
             st.write("✅ ③ 이미지 생성 완료 → 아래 ④ 결과에 v" + str(len(ss.versions)) + "로 등록")
         status.update(label="🤖 완료! 아래 ④ 결과를 확인하세요" if ok else "🤖 이미지 생성 단계에서 멈췄어요",
@@ -528,12 +544,14 @@ def codex_revise(base_png: bytes, idx: int, req: str, ref_bytes: list[bytes]) ->
     base = f"base_v{idx + 1}.png"
     CODEX_DIR.mkdir(exist_ok=True)
     (CODEX_DIR / base).write_bytes(base_png)
-    refs = _codex_refs(ref_bytes)
+    refs, projs = _write_work_files()
     prompt = (f"Revise the attached diagram `{base}` (version v{idx + 1}). Keep everything in it unchanged except "
               f"this revision: {req}\n"
               + (f"The attached {', '.join(refs)} are the style references; keep following them.\n" if refs else "")
+              + (f"The attached {', '.join(projs)} are my design drawings: keep the content consistent with them; "
+                 "do not invent programs, labels or numbers.\n" if projs else "")
               + "Reply in Korean.")
-    return _codex_call(prompt, [base, *refs], req, ss.get("codex_session"))
+    return _codex_call(prompt, [base, *refs, *projs], req, ss.get("codex_session"))
 
 
 def final_prompt(draft: str) -> str:
@@ -597,15 +615,15 @@ def qa_engine() -> tuple[str | None, str | None]:
     return ("api", key) if key else (None, None)
 
 
-def _write_work_files() -> list[str]:
-    """검수·재생성용으로 스케치/레퍼런스를 작업 폴더에 새로 씀. 레퍼런스 파일명 목록 반환."""
+def _write_work_files() -> tuple[list[str], list[str]]:
+    """검수·재생성용으로 스케치/레퍼런스/내 설계 도면을 작업 폴더에 새로 씀. (레퍼런스, 설계 도면) 파일명 반환."""
     CODEX_DIR.mkdir(exist_ok=True)
     Image.open(io.BytesIO(ss.sketch_bytes)).convert("RGB").save(CODEX_DIR / "1_sketch.png", format="PNG")
-    names = []
-    for i, b in enumerate(ref_bytes):
-        names.append(f"2_reference_{i + 1}.png")
-        Image.open(io.BytesIO(b)).convert("RGB").save(CODEX_DIR / names[-1], format="PNG")
-    return names
+    refs, projs = [], []
+    for name, b in attach_items(ref_bytes)[1:]:
+        (refs if name.startswith("2_") else projs).append(name)
+        Image.open(io.BytesIO(b)).convert("RGB").save(CODEX_DIR / name, format="PNG")
+    return refs, projs
 
 
 def run_qa(i: int) -> bool:
@@ -614,17 +632,18 @@ def run_qa(i: int) -> bool:
         st.warning("검수하려면 Claude Code 로그인(구독) 또는 Claude API 키가 필요해요.")
         return False
     v = ss.versions[i]
-    refs = _write_work_files()
+    refs, projs = _write_work_files()
     result_name = f"check_v{i + 1}.png"
     (CODEX_DIR / result_name).write_bytes(v["png"])
     try:
         with st.spinner(f"Claude가 v{i + 1}을(를) 검수하고 있어요... 보통 1~3분"):
             if engine == "code":
                 res = claude_cli.qa(CODEX_DIR, result_name, "1_sketch.png", refs, review_context(),
-                                    v.get("prompt", ""), claude_cli.MODELS[cc_model])
+                                    v.get("prompt", ""), claude_cli.MODELS[cc_model], projects=projs)
             else:
                 res = claude_review.qa(key, claude_review.MODELS[claude_model_label], claude_effort, v["png"],
-                                       ss.sketch_bytes, ref_bytes, review_context(), v.get("prompt", ""))
+                                       ss.sketch_bytes, ref_bytes, review_context(), v.get("prompt", ""),
+                                       project_bytes)
     except RuntimeError as e:
         st.error(f"v{i + 1} 검수 실패: {str(e).splitlines()[0]}")
         return False
@@ -642,13 +661,15 @@ def regenerate_from_qa(i: int) -> bool:
         return False
     note = f"v{i + 1} 검수 반영 수정본"
     if use_codex:
-        refs = _write_work_files()
+        refs, projs = _write_work_files()
         base = f"base_v{i + 1}.png"
         (CODEX_DIR / base).write_bytes(v["png"])
         prompt = (f"{text}\n\nAttached: `{base}` = the diagram to revise (edit this image); "
                   "`1_sketch.png` = original sketch (structure reference)"
-                  + (f"; {', '.join(refs)} = style references" if refs else "") + ".\nReply in Korean.")
-        return _codex_call(prompt, [base, "1_sketch.png", *refs], note, ss.get("codex_session"))
+                  + (f"; {', '.join(refs)} = style references" if refs else "")
+                  + (f"; {', '.join(projs)} = my design drawings (content facts — do not invent anything beyond them)"
+                     if projs else "") + ".\nReply in Korean.")
+        return _codex_call(prompt, [base, "1_sketch.png", *refs, *projs], note, ss.get("codex_session"))
     if use_api:
         with st.spinner(f"v{i + 1} 검수 수정안으로 다시 생성 중..."):
             png = render(v["png"], ref_bytes, text)
@@ -676,6 +697,49 @@ st.text_area(
     height=80,
     placeholder="예: 대지 경사를 따라 매스가 3단계로 쪼개지며 중정이 생기는 과정. 1층은 공용, 2~3층은 주거.",
 )
+
+MAX_PROJECT = 6
+with st.expander("📐 내 설계 자료 (선택) — 내 의도와 다른 내용이 나오지 않게",
+                 expanded=bool(ss.get("project_text") or ss.pasted_projects)):
+    st.caption("내가 이미 만든 도면·다이어그램과 프로그램·설계 논리 글을 넣으면, AI가 이걸 **내용의 기준**으로 삼아 "
+               "없는 프로그램·라벨·숫자를 지어내지 않아요. 스타일은 여기서 가져오지 않고 ② 레퍼런스에서만 가져와요. "
+               "Claude 검토·검수도 이 자료와 어긋나는지 확인해요.")
+    pc1, pc2 = st.columns(2)
+    with pc1:
+        pfiles = st.file_uploader("설계 도면·다이어그램 이미지 (평면·단면·배치도, 기존 다이어그램 등)",
+                                  type=["png", "jpg", "jpeg", "webp"], accept_multiple_files=True, key="project_files")
+        pp1, pp2 = st.columns(2)
+        if pp1.button("📋 도면 붙여넣기", help="캐드·라이노·PDF 뷰어 등에서 캡처/복사한 이미지를 추가"):
+            if b := clipboard_or_warn():
+                ss.pasted_projects.append(b)
+        if ss.pasted_projects and pp2.button("붙인 도면 비우기"):
+            ss.pasted_projects = []
+            st.rerun()
+        project_bytes = ([f.getvalue() for f in pfiles] if pfiles else []) + ss.pasted_projects
+        if len(project_bytes) > MAX_PROJECT:
+            st.warning(f"도면은 {MAX_PROJECT}장까지만 보내요 (이미지가 많으면 AI가 헷갈려요). 앞의 {MAX_PROJECT}장을 써요.")
+            project_bytes = project_bytes[:MAX_PROJECT]
+        if project_bytes:
+            st.image(project_bytes, width=90)
+    with pc2:
+        tfile = st.file_uploader("설계 글 파일 (.txt .md .pdf .docx) — 글자만 뽑아서 아래에 넣어요",
+                                 type=["txt", "md", "pdf", "docx"], key="project_doc")
+        if tfile and ss.get("project_doc_id") != tfile.file_id:
+            ss.project_doc_id = tfile.file_id
+            try:
+                extracted = bridge.extract_text(tfile.name, tfile.getvalue())
+                ss.project_text = (ss.project_text + "\n\n" if ss.project_text.strip() else "") + extracted
+                if not extracted:
+                    st.warning("파일에서 글자를 찾지 못했어요 (스캔한 PDF는 글자가 없어요). 이미지로 넣어주세요.")
+            except Exception as e:  # noqa: BLE001
+                st.error(f"파일을 읽지 못했어요: {e}")
+        st.text_area("프로그램·설계 논리 (직접 쓰거나 붙여넣기)", key="project_text", height=170,
+                     placeholder="예: 1층 로비·카페(공용), 2~3층 공유오피스, 4~10층 주거 120세대. "
+                                 "대지 중앙 30×30m 중정이 동선과 프로그램을 묶는다. 경사를 따라 3단으로 내려간다.")
+        if len(ss.project_text) > 3000:
+            st.caption(f"글이 길어요 ({len(ss.project_text)}자). 앞의 3,000자만 프롬프트에 들어가요 — 핵심만 남기면 더 정확해요.")
+    st.checkbox("🔒 설계 자료와 스케치에 없는 내용은 추가하지 않기 (엄격)", value=True, key="facts_strict",
+                help="켜면: 자료에 없는 프로그램·라벨·숫자·설계 행위를 지어내지 말라고 지시하고, 검수에서도 잡아내요.")
 
 c1, c2 = st.columns(2)
 
@@ -763,7 +827,7 @@ with c1:
     with st.expander("스타일 가이드 (자동 생성, 직접 수정 가능)", expanded=bool(ss.style_guide)):
         ss.style_guide = st.text_area("style guide", ss.style_guide, height=180, label_visibility="collapsed")
 
-has_input = bool(goal_text() or ref_bytes or ss.mood or ss.picked)
+has_input = bool(goal_text() or ref_bytes or ss.mood or ss.picked or project_bytes or ss.project_text.strip())
 
 # ---------------------------------------------------------------- ③ 스케치 + 생성
 with c2:
