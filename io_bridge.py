@@ -249,3 +249,36 @@ def make_board(sketch: bytes, refs: list[bytes]) -> bytes:
     buf = io.BytesIO()
     board.save(buf, format="PNG")
     return buf.getvalue()
+
+
+# ------------------------------------------------------------------ 데스크탑 알림
+_TOAST_PS = r"""
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
+$t = [Security.SecurityElement]::Escape($env:NT_TITLE)
+$b = [Security.SecurityElement]::Escape($env:NT_BODY)
+$img = ''
+if ($env:NT_IMG) { $img = "<image placement='hero' src='" + [Security.SecurityElement]::Escape($env:NT_IMG) + "'/>" }
+$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+$xml.LoadXml("<toast><visual><binding template='ToastGeneric'><text>$t</text><text>$b</text>$img</binding></visual><audio src='ms-winsoundevent:Notification.Default'/></toast>")
+$app = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($app).Show([Windows.UI.Notifications.ToastNotification]::new($xml))
+"""
+
+
+def notify(title: str, body: str, image: Path | None = None) -> None:
+    """윈도우/맥 데스크탑 알림 (오른쪽 아래 알림 + 소리). 실패해도 앱은 계속 동작."""
+    try:
+        if SYSTEM == "Windows":
+            env = {**os.environ, "NT_TITLE": title, "NT_BODY": body,
+                   "NT_IMG": str(Path(image).resolve()) if image else ""}
+            subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", _TOAST_PS],
+                             env=env, creationflags=0x08000000)
+        elif SYSTEM == "Darwin":
+            subprocess.Popen(["osascript", "-e", "on run argv", "-e",
+                              'display notification (item 2 of argv) with title (item 1 of argv) sound name "Glass"',
+                              "-e", "end run", title, body])
+        elif shutil.which("notify-send"):
+            subprocess.Popen(["notify-send", title, body])
+    except Exception:  # noqa: BLE001
+        pass

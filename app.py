@@ -176,6 +176,9 @@ with st.sidebar:
                                     "한 장으로 합치기: 붙여넣기가 잘 안 될 때. 스케치+레퍼런스를 라벨 붙인 보드 1장으로")
         prompt_lang = st.radio("프롬프트 언어", ["English (추천)", "한국어"], horizontal=True,
                                help="AI는 영어 지시를 더 정확히 따르는 편이에요. ChatGPT 답변은 한국어로 오게 해뒀어요.")
+    notify_on = st.checkbox("🔔 완료 알림 (다른 작업 중에도 알림)", value=True,
+                            help="이미지가 완성되고 Claude 검수가 끝나면 화면 오른쪽 아래에 알림과 소리가 나요. "
+                                 "생성이 실패해도 알려줘요.")
     quality_label = st.select_slider("화질", options=list(QUALITY), value="표준")
     aspect = st.selectbox("비율", list(ASPECT), index=1)
     fidelity = st.radio(
@@ -463,6 +466,8 @@ def _codex_call(prompt: str, images: list[str], note: str, session: str | None) 
                                    codex_bridge.EFFORT[think], session_id=session)
     except RuntimeError as e:
         st.error(str(e).split("\n\n")[0])
+        if notify_on:
+            bridge.notify("❌ 다이어그램 생성 실패", str(e).split("\n")[0][:120])
         detail = str(e).split("\n\n", 1)
         if len(detail) > 1:
             with st.expander("Codex 실행 기록"):
@@ -564,9 +569,20 @@ def send_to_chatgpt(ref_bytes: list[bytes], extra: str) -> None:
 def add_version(png: bytes, note: str, prompt: str = "") -> None:
     """새 버전을 목록 맨 아래에 추가 (기존 버전은 그대로). 자동 검수가 켜져 있으면 바로 Claude 검수."""
     ss.versions.append({"png": png, "note": note, "prompt": prompt or ss.get("gpt_prompt", ""), "qa": None})
-    bridge.save_output(OUT_DIR, png, len(ss.versions))
+    saved = bridge.save_output(OUT_DIR, png, len(ss.versions))
+    n = len(ss.versions)
     if auto_qa and qa_engine()[0] and ss.get("sketch_bytes"):
-        run_qa(len(ss.versions) - 1)
+        run_qa(n - 1)
+    if notify_on:
+        qa = ss.versions[-1].get("qa")
+        if not qa:
+            title, body = f"🖼️ v{n} 완성", note
+        elif qa["verdict"] == "revise":
+            first = [ln.strip() for ln in qa["issues_ko"].splitlines() if ln.strip()][:2]
+            title, body = f"⚠️ v{n} 완성 · Claude 검수: 수정 필요", " / ".join(first) or note
+        else:
+            title, body = f"✅ v{n} 완성 · Claude 검수 통과", note
+        bridge.notify(title, body + "\n건축 다이어그램 에이전트에서 확인하세요.", saved)
 
 
 # ---------------------------------------------------------------- 결과 검수 (Claude)
