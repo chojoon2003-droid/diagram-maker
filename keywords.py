@@ -131,6 +131,24 @@ GROUPS += [
      ["옅은 하늘 그라데이션 · soft sky gradient", "흰 배경 · plain white background", "원경 건물 회색 · grey background buildings"]),
 ]
 
+GROUPS += [
+    (["콘크리트", "노출", "concrete"],
+     ["노출콘크리트 · exposed board-formed concrete", "매끈한 콘크리트 · smooth fair-faced concrete"]),
+    (["유리", "커튼월", "glass"],
+     ["투명 로이유리 · clear low-e glazing with reflections", "실내가 비치는 유리 · glazing showing warm interior"]),
+    (["목재", "나무 마감", "우드", "timber", "wood"],
+     ["따뜻한 목재 루버 · warm timber louvers", "목재 클래딩 · vertical timber cladding"]),
+    (["벽돌", "brick"], ["붉은 벽돌 · red brick", "회색 벽돌 · grey brick with fine joints"]),
+    (["금속", "알루미늄", "메탈", "metal"], ["짙은 회색 금속 · dark grey anodized aluminium", "타공 금속판 · perforated metal panels"]),
+    (["노을", "골든", "해질", "석양", "golden"], ["골든아워 · golden hour warm low sun", "긴 그림자 · long soft shadows"]),
+    (["밤", "야경", "야간", "night"], ["야경 · blue-hour night view", "실내 조명 번짐 · warm interior glow"]),
+    (["흐림", "비", "안개", "overcast"], ["흐린 하늘 · soft overcast sky", "젖은 바닥 반사 · wet ground reflections"]),
+]
+
+RENDER_DEFAULT = ["주간 자연광 · natural daylight", "부드러운 그림자 · soft shadows", "골든아워 · golden hour warm low sun",
+                  "실루엣 인물 · silhouette people", "옅은 하늘 그라데이션 · soft sky gradient",
+                  "투명 로이유리 · clear low-e glazing with reflections", "노출콘크리트 · exposed board-formed concrete"]
+
 PLAN_DEFAULT = ["절단 벽 검정 포셰 · solid black poché walls", "실별 파스텔 채색 · pastel room fills",
                 "선화 가구 · line-art furniture", "목재 바닥 패턴 · timber floor pattern",
                 "부드러운 그림자 · soft drop shadows", "선화 나무 · line-art trees", "용도별 색 구분 · color-coded program zones"]
@@ -231,4 +249,5 @@ def ko(label: str) -> str:
     return label.split(" · ")[0]
 
 
-DEFAULTS_BY_WORK.update({"다이어그램": DEFAULT_KEYWORDS, "평면 리터칭": PLAN_DEFAULT, "단면 리터칭": SECTION_DEFAULT})
+DEFAULTS_BY_WORK.update({"다이어그램": DEFAULT_KEYWORDS, "평면 리터칭": PLAN_DEFAULT, "단면 리터칭": SECTION_DEFAULT,
+                         "렌더링": RENDER_DEFAULT})

@@ -9,6 +9,7 @@
 
 import base64
 import io
+import json
 import os
 import re
 from urllib.parse import urlencode
@@ -39,9 +40,11 @@ CODEX_DIR = APP_DIR / "to_codex"
 CHATGPT_URL = "https://chatgpt.com/"
 CLAUDE_URL = "https://claude.ai/new"
 DEFAULT_INBOX = APP_DIR / "inbox"
+PRESET_DIR = APP_DIR / "presets"
 DEFAULT_INBOX.mkdir(exist_ok=True)
 
 PLAN_TYPES = ["실별 색 구분", "가구·인테리어", "조경·외부공간", "바닥 재질", "그림자·깊이감", "흑백 포셰 강조", "동선 표시"]
+RENDER_TYPES = ["주간 (맑음)", "골든아워", "야경", "흐림·비", "계절감", "눈높이 컷", "조감 컷", "디테일 컷", "첨경 많이", "첨경 적게"]
 SECTION_TYPES = ["절단면 포셰 강조", "지반·지형", "빛·환경 흐름", "사람·스케일", "단면 투시(깊이감)", "재료·구조", "배경·하늘"]
 DIAGRAM_TYPES = ["매스 형성 과정", "프로그램 조닝", "동선", "분해 액소", "환경 (빛·바람)",
                  "단면 다이어그램", "배치·맥락", "구조·재료", "컨셉 다이어그램", "단계별 시퀀스"]
@@ -61,13 +64,17 @@ st.markdown(  # 키워드 버튼이 옆으로 잘리지 않고 줄바꿈되게
 st.title("🏛️ 건축 다이어그램 에이전트")
 work_type = st.radio("작업 종류", prompts.WORK_TYPES, horizontal=True, key="work_type",
                      help="다이어그램: 스케치를 다이어그램으로\n\n평면·단면 리터칭: 내 도면의 선은 그대로 두고 색·질감·그림자·첨경을 입혀요")
-is_drawing = work_type != "다이어그램"
+is_drawing = work_type != "다이어그램"  # 다이어그램이 아닌 모든 작업 (평면·단면·렌더링)
+is_render = work_type == "렌더링"
+is_retouch = work_type in ("평면 리터칭", "단면 리터칭")
+INPUT_LABEL = {"다이어그램": "내 스케치", "평면 리터칭": "리터칭할 도면", "단면 리터칭": "리터칭할 도면", "렌더링": "렌더링할 모델 뷰"}
 
 ss = st.session_state
 for k, v in {
     "style_guide": "", "versions": [], "chat": [], "picked": [], "pasted_refs": [],
     "sketch_bytes": None, "sketch_src": None, "mood": "", "mood_ver": 0,
     "pasted_projects": [], "project_text": "", "cad_items": {},
+    "anchor": None, "material_map": None, "material_legend": [], "materials": "",
 }.items():
     ss.setdefault(k, v)
 
@@ -104,6 +111,36 @@ def gemini_models(key: str) -> list[str]:
 # ---------------------------------------------------------------- 설정
 with st.sidebar:
     st.header("설정")
+    with st.expander("💾 프로젝트 프리셋 (같은 프로젝트 여러 컷을 같은 톤으로)"):
+        PRESET_KEYS = (["materials", "material_legend", "diagram_goal", "mood", "picked", "detail", "style_strength",
+                        "project_text", "facts_strict"] + [f"types_{w}" for w in prompts.WORK_TYPES])
+        PRESET_DIR.mkdir(exist_ok=True)
+        names = sorted(p.stem for p in PRESET_DIR.glob("*.json"))
+        sel = st.selectbox("불러오기", ["(선택)"] + names, key="preset_sel")
+        if st.button("불러오기", disabled=sel == "(선택)"):
+            data = json.loads((PRESET_DIR / f"{sel}.json").read_text(encoding="utf-8"))
+            for k in PRESET_KEYS:
+                if k in data:
+                    ss[k] = data[k]
+            ss.mood_ver += 1
+            for k in ("anchor_png", "material_map"):
+                if data.get(k):
+                    b = base64.b64decode(data[k])
+                    if k == "anchor_png":
+                        ss.anchor = {"png": b, "note": data.get("anchor_note", "프리셋 기준 컷")}
+                    else:
+                        ss.material_map = b
+            st.rerun()
+        pname = st.text_input("현재 설정을 저장할 이름", placeholder="예: OO복합시설_외관")
+        if st.button("저장", disabled=not pname.strip()):
+            data = {k: ss.get(k) for k in PRESET_KEYS if k in ss}
+            if ss.anchor:
+                data["anchor_png"] = base64.b64encode(ss.anchor["png"]).decode()
+                data["anchor_note"] = ss.anchor["note"]
+            if ss.material_map:
+                data["material_map"] = base64.b64encode(ss.material_map).decode()
+            (PRESET_DIR / f"{pname.strip()}.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            st.success("저장했어요. 다른 날·다른 컷에서 불러오면 재료·느낌·키워드·기준 컷이 그대로 돌아와요.")
     saved_key = _read(KEY_FILE)
     env_key = os.getenv("OPENAI_API_KEY", saved_key)
     mode = st.radio(
@@ -199,21 +236,31 @@ with st.sidebar:
     )
     form_level = prompts.FORM_LABELS.index(form_label)
     st.caption(prompts.FORM_HELP[form_level])
-    line_lock = st.checkbox("📐 원본 선 고정 합성", value=is_drawing, key=f"lock_{work_type}",
+    line_lock = st.checkbox("📐 원본 선 고정 합성", value=is_retouch, key=f"lock_{work_type}",
                             help="AI 결과 위에 원본 도면/스케치의 선을 다시 겹쳐서, AI가 선을 틀어도 최종본의 선은 원본과 같게 해요. "
                                  "AI 원본과 선 고정본이 둘 다 결과 목록에 추가돼요.")
+    multipass, pass_qa = False, False
+    if is_render:
+        multipass = st.checkbox("🪜 나눠서 렌더링 (재료·조명 → 하늘·배경 → 첨경)", value=False,
+                                disabled=use_chatgpt,
+                                help="한 번에 다 그리지 않고 3번에 나눠 그려서 건물 형태가 덜 틀어져요. "
+                                     "대신 생성 횟수가 3배라 OpenAI 사용량이 늘어요. (Codex·API 모드)")
+        if multipass:
+            pass_qa = st.checkbox("단계마다 Claude 검수", value=False, help="끄면 마지막 단계만 검수해요 (사용량 절약)")
     lock_opacity, lock_threshold = 1.0, 150
     if line_lock:
         lock_opacity = st.slider("선 진하기", 0.3, 1.0, 1.0, 0.05, help="1.0이면 원본 선을 그대로, 낮추면 AI 표현과 섞여요")
         lock_threshold = st.slider("선 인식 감도", 80, 220, 150, 10,
                                    help="높일수록 옅은 선(해치·가는 선)까지 원본에서 가져와요. 회색 바탕이 덮이면 낮추세요.")
     detail = st.select_slider(
-        "첨경·디테일 수준", options=prompts.DETAIL_LEVELS, value=prompts.DETAIL_LEVELS[1],
+        "첨경·디테일 수준", options=prompts.DETAIL_LEVELS, key="detail",
+        **({} if "detail" in ss else {"value": prompts.DETAIL_LEVELS[1]}),
         help="단순: 실루엣·단순 형태\n\n사실적 (과한 디테일 없이): 비례·자세는 사실적, 옷 재질·얼굴·잎 하나하나 같은 세부 묘사 없음\n\n"
              "풍부: 질감·디테일 허용 (OpenAI 처리량이 늘 수 있어요)",
     )
     style_strength = st.select_slider(
-        "레퍼런스 스타일 강도", options=["구조 우선", "균형", "스타일 우선"], value="균형",
+        "레퍼런스 스타일 강도", options=["구조 우선", "균형", "스타일 우선"], key="style_strength",
+        **({} if "style_strength" in ss else {"value": "균형"}),
         help="구조 우선: 레퍼런스는 느슨한 참고\n\n균형: 색·선·라벨·화살표를 가깝게 따름\n\n"
              "스타일 우선: 레퍼런스의 그래픽 언어만 사용, 레퍼런스에 없는 제목·범례 등은 추가 금지 (형태는 스케치 유지)",
     )
@@ -364,7 +411,17 @@ def spec(extra: str = "") -> prompts.Spec:
         quality=quality_label, aspect=aspect, think=think, extra=extra, style_strength=style_strength,
         project_text=ss.get("project_text", ""), n_project=len(project_bytes),
         facts_strict=ss.get("facts_strict", True), work_type=work_type, form_level=form_level, detail=detail,
+        materials=ss.materials if is_render else "", material_legend=ss.material_legend if is_render else [],
+        has_material_map=bool(is_render and ss.material_map), has_anchor=anchor_on(),
     )
+
+
+def anchor_on() -> bool:
+    return bool(ss.anchor and ss.get("use_anchor", True))
+
+
+def map_on() -> bool:
+    return bool(is_render and ss.material_map)
 
 
 def current_types() -> list[str]:
@@ -378,7 +435,7 @@ def project_items() -> list[tuple[str, bytes]]:
 def attach_items(ref_bytes: list[bytes]) -> list[tuple[str, bytes]]:
     """첨부 순서: 스케치 → 레퍼런스 → 내 설계 도면"""
     return ([("1_sketch.png", ss.sketch_bytes)] + [(f"2_reference_{i + 1}.png", b) for i, b in enumerate(ref_bytes)]
-            + project_items())
+            + project_items() + ([("4_material_map.png", ss.material_map)] if map_on() else []))
 
 
 # ---------------------------------------------------------------- API 모드 생성
@@ -420,10 +477,22 @@ def review_context() -> str:
         f"- 형태 변형 단계: {form_label} ({form_level + 1}/5) — {prompts.FORM_HELP[form_level]}",
         f"- 레퍼런스 스타일 강도: {style_strength} / 원본 선 고정 합성: {'켜짐' if line_lock else '꺼짐'}",
         f"- 첨경·디테일 수준: {detail} — {prompts.DETAIL_KO[detail]}",
+        f"- 기준 컷(같은 프로젝트 확정 컷)을 마지막 레퍼런스로 사용: {'예' if anchor_on() else '아니오'}",
+    ] + ([f"- 재료 지정:\n{ss.materials.strip()}"] if is_render and ss.materials.strip() else []) + (
+        [f"- 재료 색 코딩 맵 범례: " + "; ".join(f"{h}={m}" for h, m in ss.material_legend if m.strip())]
+        if map_on() else []) + [
         f"- 이미지 첨부 방식: {attach_mode} / 화질: {quality_label} / 비율: {aspect} / 생각 수준: {think}",
         f"- 내 설계 자료: 도면 {len(project_bytes)}장, 설계 글 {'있음' if ss.get('project_text', '').strip() else '없음'}"
         f" / 없는 내용 추가 금지: {'예' if ss.get('facts_strict', True) else '아니오'}",
     ] + ([f"- 프로그램·설계 논리 (내 글):\n{ss.project_text.strip()[:3000]}"] if ss.get("project_text", "").strip() else []))
+
+
+def map_extra_bytes() -> list[tuple[bytes, str]]:
+    return [(ss.material_map, "MATERIAL ID MAP (same camera; flat colors = materials)")] if map_on() else []
+
+
+def map_extra_files() -> list[tuple[str, str]]:
+    return [("4_material_map.png", "MATERIAL ID MAP (same camera; flat colors = materials)")] if map_on() else []
 
 
 def run_review(ref_bytes: list[bytes], draft: str) -> None:
@@ -431,7 +500,7 @@ def run_review(ref_bytes: list[bytes], draft: str) -> None:
     try:
         with st.spinner(f"Claude({claude_model_label})가 스케치·레퍼런스를 보며 검토 중... (30초~2분)"):
             result = claude_review.review(claude_key, model, claude_effort, draft, review_context(),
-                                          ss.sketch_bytes, ref_bytes, project_bytes)
+                                          ss.sketch_bytes, ref_bytes, project_bytes, map_extra_bytes())
         ss.review = {"draft": draft, **result}
         ss.reviewed_text = result["improved_prompt"]
     except RuntimeError as e:
@@ -442,7 +511,8 @@ def prepare_attachments(ref_bytes: list[bytes]) -> None:
     """to_chatgpt 폴더에 첨부 이미지를 만들고 클립보드에 복사 (ChatGPT·Claude 공용)."""
     bridge.write_images(TO_GPT_DIR, attach_items(ref_bytes))
     if attach_mode == "한 장으로 합치기":
-        (TO_GPT_DIR / "board.png").write_bytes(bridge.make_board(ss.sketch_bytes, ref_bytes, project_bytes))
+        (TO_GPT_DIR / "board.png").write_bytes(bridge.make_board(
+            ss.sketch_bytes, ref_bytes, project_bytes, [(ss.material_map, "MATERIAL MAP")] if map_on() else None))
     try:
         copy_attachments()
         ss.clip_ok = True
@@ -458,7 +528,8 @@ def prepare_attachments(ref_bytes: list[bytes]) -> None:
 def send_to_claude(ref_bytes: list[bytes], draft: str) -> None:
     """Claude(구독)를 열고 검토 요청을 미리 채움. 이미지는 클립보드에."""
     request = prompts.claude_review_request(draft, review_context(), len(ref_bytes),
-                                            attach_mode == "한 장으로 합치기", n_project=len(project_bytes))
+                                            attach_mode == "한 장으로 합치기", n_project=len(project_bytes),
+                                            has_map=map_on())
     ss.claude_request, ss.claude_draft = request, draft
     prepare_attachments(ref_bytes)
     ss.claude_prefilled = False
@@ -504,7 +575,7 @@ def _codex_refs(ref_bytes: list[bytes]) -> list[str]:
     return names
 
 
-def _codex_call(prompt: str, images: list[str], note: str, session: str | None) -> bool:
+def _codex_call(prompt: str, images: list[str], note: str, session: str | None, qa: bool = True) -> bool:
     out = f"result_v{len(ss.versions) + 1}.png"
     try:
         with st.spinner(f"Codex({codex_model})가 생성 중이에요... 보통 1~5분 걸려요. 이 창을 닫지 마세요."):
@@ -521,7 +592,7 @@ def _codex_call(prompt: str, images: list[str], note: str, session: str | None) 
         return False
     ss.codex_session, ss.codex_log = res["session_id"], res["log"]
     ss.chat.append(("assistant", f"v{len(ss.versions) + 1} 완료 ({note})."))
-    register_result(res["png"], note, prompt=prompt)
+    register_result(res["png"], note, prompt=prompt, qa=qa)
     return True
 
 
@@ -530,7 +601,31 @@ def codex_generate(ref_bytes: list[bytes], extra: str) -> None:
     ss.gpt_prompt = prompt
     items = attach_items(ref_bytes)
     bridge.write_images(CODEX_DIR, items)
-    _codex_call(prompt, [n for n, _ in items], "Codex 생성", None)
+    if multipass:
+        codex_passes(prompt, [n for n, _ in items], "Codex 생성")
+    else:
+        _codex_call(prompt, [n for n, _ in items], "Codex 생성", None)
+
+
+def codex_passes(prompt: str, images: list[str], note: str) -> bool:
+    """렌더링 3단계 생성: 재료·조명 → 하늘·배경 → 첨경. 단계마다 결과가 목록에 추가돼요."""
+    refs = [n for n in images if n.startswith("2_")]
+    for k, (instr, pname) in enumerate(zip(prompts.PASSES_EN, prompts.PASS_NAMES)):
+        last = k == len(prompts.PASSES_EN) - 1
+        st.write(f"🪜 {pname} 생성 중...")
+        if k == 0:
+            ok = _codex_call(f"{prompt}\n\n{instr}", images, f"{note} · {pname}", None, qa=last or pass_qa)
+        else:
+            base = f"pass_{k}.png"
+            (CODEX_DIR / base).write_bytes(ss.versions[-1]["png"])
+            p2 = (f"{instr}\nAttached: `{base}` = the current image to edit; `1_sketch.png` = the model view "
+                  "(geometry and camera reference)" + (f"; {', '.join(refs)} = style references" if refs else "")
+                  + f".\n{prompts.DETAIL_EN[detail]}\n{prompts.EFFICIENCY_EN}")
+            ok = _codex_call(p2, [base, "1_sketch.png", *refs], f"{note} · {pname}", ss.get("codex_session"),
+                             qa=last or pass_qa)
+        if not ok:
+            return False
+    return True
 
 
 def run_pipeline(ref_bytes: list[bytes], extra: str, draft: str) -> None:
@@ -546,7 +641,7 @@ def run_pipeline(ref_bytes: list[bytes], extra: str, draft: str) -> None:
             try:
                 if pipe_engine.startswith("Claude Code"):
                     res = claude_cli.review(CODEX_DIR, draft, review_context(), "1_sketch.png", refs,
-                                            claude_cli.MODELS[cc_model], projects=projs)
+                                            claude_cli.MODELS[cc_model], projects=projs, extras=map_extra_files())
                     ss.review = {"draft": draft, "summary_ko": res["summary_ko"], "issues": [],
                                  "sketch_reading_ko": "", "reference_style_ko": "",
                                  "improved_prompt": res["improved_prompt"], "model_used": "Claude Code (구독)"}
@@ -555,7 +650,8 @@ def run_pipeline(ref_bytes: list[bytes], extra: str, draft: str) -> None:
                     if not key:
                         raise RuntimeError("Claude API 키가 없어요. 사이드바 '프롬프트 검토'에서 키를 넣어주세요.")
                     result = claude_review.review(key, claude_review.MODELS[claude_model_label], claude_effort,
-                                                  draft, review_context(), ss.sketch_bytes, ref_bytes, project_bytes)
+                                                  draft, review_context(), ss.sketch_bytes, ref_bytes, project_bytes,
+                                                  map_extra_bytes())
                     ss.review = {"draft": draft, **result}
                 ss.reviewed_text = ss.review["improved_prompt"]
                 prompt = ensure_rules(ss.reviewed_text)
@@ -564,7 +660,9 @@ def run_pipeline(ref_bytes: list[bytes], extra: str, draft: str) -> None:
                 st.write(f"⚠️ ② Claude 검토 실패 → 초안 그대로 진행: {str(e).splitlines()[0]}")
         ss.gpt_prompt = prompt
         st.write(f"⏳ ③ Codex({codex_model})로 다이어그램 생성 중... 보통 1~5분")
-        ok = _codex_call(prompt, ["1_sketch.png", *refs, *projs], "원클릭 자동 생성", None)
+        imgs = ["1_sketch.png", *refs, *projs] + (["4_material_map.png"] if map_on() else [])
+        ok = (codex_passes(prompt, imgs, "원클릭 자동 생성") if multipass
+              else _codex_call(prompt, imgs, "원클릭 자동 생성", None))
         if ok:
             st.write("✅ ③ 이미지 생성 완료 → 아래 ④ 결과에 v" + str(len(ss.versions)) + "로 등록")
         status.update(label="🤖 완료! 아래 ④ 결과를 확인하세요" if ok else "🤖 이미지 생성 단계에서 멈췄어요",
@@ -624,14 +722,23 @@ def send_to_chatgpt(ref_bytes: list[bytes], extra: str) -> None:
     ss.opened = bridge.open_url(url, prefer_chrome=open_target != "기본 브라우저")
 
 
-def register_result(png: bytes, note: str, prompt: str = "") -> None:
+def register_result(png: bytes, note: str, prompt: str = "", qa: bool = True) -> None:
     """AI가 만든 새 이미지를 등록. 선 고정 합성이 켜져 있으면 'AI 원본'과 '원본 선 고정본'을 둘 다 추가."""
     if line_lock and ss.get("sketch_bytes"):
         add_version(png, f"{note} · AI 원본", prompt, qa=False, notify=False)
         locked, how = drawing_tools.lock_lines(png, ss.sketch_bytes, lock_opacity, lock_threshold)
-        add_version(locked, f"{note} · 원본 선 고정 ({how})", prompt)
+        add_version(locked, f"{note} · 원본 선 고정 ({how})", prompt, qa=qa)
     else:
-        add_version(png, note, prompt)
+        add_version(png, note, prompt, qa=qa)
+
+
+def compute_diff(v: dict) -> None:
+    """렌더링: 입력 모델 뷰와 결과의 윤곽선 비교 (빨강=사라진 윤곽, 파랑=새 윤곽)"""
+    try:
+        png, pct, how = drawing_tools.edge_diff(ss.sketch_bytes, v["png"])
+        v["diff"] = {"png": png, "pct": pct, "how": how}
+    except Exception as e:  # noqa: BLE001
+        v["diff"] = {"png": None, "pct": None, "how": f"비교 실패: {str(e)[:80]}"}
 
 
 def add_version(png: bytes, note: str, prompt: str = "", qa: bool = True, notify: bool = True) -> None:
@@ -639,6 +746,8 @@ def add_version(png: bytes, note: str, prompt: str = "", qa: bool = True, notify
     ss.versions.append({"png": png, "note": note, "prompt": prompt or ss.get("gpt_prompt", ""), "qa": None})
     saved = bridge.save_output(OUT_DIR, png, len(ss.versions))
     n = len(ss.versions)
+    if is_render and ss.get("sketch_bytes"):
+        compute_diff(ss.versions[-1])
     if qa and auto_qa and qa_engine()[0] and ss.get("sketch_bytes"):
         run_qa(n - 1)
     if notify and notify_on:
@@ -671,7 +780,10 @@ def _write_work_files() -> tuple[list[str], list[str]]:
     Image.open(io.BytesIO(ss.sketch_bytes)).convert("RGB").save(CODEX_DIR / "1_sketch.png", format="PNG")
     refs, projs = [], []
     for name, b in attach_items(ref_bytes)[1:]:
-        (refs if name.startswith("2_") else projs).append(name)
+        if name.startswith("2_"):
+            refs.append(name)
+        elif name.startswith("3_"):
+            projs.append(name)
         Image.open(io.BytesIO(b)).convert("RGB").save(CODEX_DIR / name, format="PNG")
     return refs, projs
 
@@ -685,15 +797,23 @@ def run_qa(i: int) -> bool:
     refs, projs = _write_work_files()
     result_name = f"check_v{i + 1}.png"
     (CODEX_DIR / result_name).write_bytes(v["png"])
+    extra_files, extra_bytes = list(map_extra_files()), list(map_extra_bytes())
+    if (v.get("diff") or {}).get("png"):
+        label = ("DIFF MAP (red = model edges missing in the result, blue = new edges; "
+                 f"{v['diff']['pct']}% of model edges missing)")
+        (CODEX_DIR / f"diff_v{i + 1}.png").write_bytes(v["diff"]["png"])
+        extra_files.append((f"diff_v{i + 1}.png", label))
+        extra_bytes.append((v["diff"]["png"], label))
     try:
         with st.spinner(f"Claude가 v{i + 1}을(를) 검수하고 있어요... 보통 1~3분"):
             if engine == "code":
                 res = claude_cli.qa(CODEX_DIR, result_name, "1_sketch.png", refs, review_context(),
-                                    v.get("prompt", ""), claude_cli.MODELS[cc_model], projects=projs)
+                                    v.get("prompt", ""), claude_cli.MODELS[cc_model], projects=projs,
+                                    extras=extra_files)
             else:
                 res = claude_review.qa(key, claude_review.MODELS[claude_model_label], claude_effort, v["png"],
                                        ss.sketch_bytes, ref_bytes, review_context(), v.get("prompt", ""),
-                                       project_bytes)
+                                       project_bytes, extra_bytes)
     except RuntimeError as e:
         st.error(f"v{i + 1} 검수 실패: {str(e).splitlines()[0]}")
         return False
@@ -719,7 +839,8 @@ def regenerate_from_qa(i: int) -> bool:
                   + (f"; {', '.join(refs)} = style references" if refs else "")
                   + (f"; {', '.join(projs)} = my design drawings (content facts — do not invent anything beyond them)"
                      if projs else "") + f".\n{prompts.DETAIL_EN[detail]}\n{prompts.EFFICIENCY_EN}")
-        return _codex_call(prompt, [base, "1_sketch.png", *refs, *projs], note, ss.get("codex_session"))
+        mp = ["4_material_map.png"] if map_on() else []
+        return _codex_call(prompt, [base, "1_sketch.png", *refs, *projs, *mp], note, ss.get("codex_session"))
     if use_api:
         with st.spinner(f"v{i + 1} 검수 수정안으로 다시 생성 중..."):
             png = render(v["png"], ref_bytes, text)
@@ -737,18 +858,62 @@ def import_result(note: str) -> None:
 
 # ================================================================ UI
 # ---------------------------------------------------------------- ① 어떤 다이어그램
-TYPE_OPTIONS = {"다이어그램": DIAGRAM_TYPES, "평면 리터칭": PLAN_TYPES, "단면 리터칭": SECTION_TYPES}
+TYPE_OPTIONS = {"다이어그램": DIAGRAM_TYPES, "평면 리터칭": PLAN_TYPES, "단면 리터칭": SECTION_TYPES,
+                "렌더링": RENDER_TYPES}
 st.subheader("① 어떤 다이어그램인가요?  (가장 우선)" if not is_drawing else f"① 어떤 {work_type}인가요?  (가장 우선)")
-st.pills("유형 (여러 개 선택 가능)" if not is_drawing else "리터칭 초점 (여러 개 선택 가능)",
-         TYPE_OPTIONS[work_type], selection_mode="multi", key=f"types_{work_type}")
+st.pills({"다이어그램": "유형", "렌더링": "렌더 초점 (시간대·카메라·분위기)"}.get(work_type, "리터칭 초점")
+         + " (여러 개 선택 가능)", TYPE_OPTIONS[work_type], selection_mode="multi", key=f"types_{work_type}")
 st.text_area(
-    "무엇을 보여주는 다이어그램인지" if not is_drawing else "이 도면으로 무엇을 보여주고 싶은지",
+    {"다이어그램": "무엇을 보여주는 다이어그램인지", "렌더링": "이 렌더링으로 무엇을 보여주고 싶은지"}.get(
+        work_type, "이 도면으로 무엇을 보여주고 싶은지"),
     key="diagram_goal",
     height=80,
-    placeholder=("예: 대지 경사를 따라 매스가 3단계로 쪼개지며 중정이 생기는 과정. 1층은 공용, 2~3층은 주거."
-                 if not is_drawing else
-                 "예: 1층 평면. 공용(로비·카페)과 주거 출입을 색으로 구분하고, 중정과 이어지는 동선이 잘 보이게."),
+    placeholder={
+        "다이어그램": "예: 대지 경사를 따라 매스가 3단계로 쪼개지며 중정이 생기는 과정. 1층은 공용, 2~3층은 주거.",
+        "렌더링": "예: 가로에서 본 저층부. 열린 1층 카페와 중정으로 들어가는 입구가 활기 있게 보이도록.",
+    }.get(work_type, "예: 1층 평면. 공용(로비·카페)과 주거 출입을 색으로 구분하고, 중정과 이어지는 동선이 잘 보이게."),
 )
+
+if is_render:
+    with st.expander("🎨 렌더링 설정 — 재료 지정 · 재료 색 코딩 맵", expanded=True):
+        r1, r2 = st.columns(2)
+        with r1:
+            st.text_area("재료 지정 (부위: 재료) — AI는 여기 적힌 재료만 써요", key="materials", height=150,
+                         placeholder="예:\n외벽: 노출콘크리트 (송판 무늬)\n창: 투명 로이유리, 실내 따뜻한 조명\n"
+                                     "프레임: 짙은 회색 알루미늄\n1층 바닥: 화강석 판석\n루버: 목재")
+        with r2:
+            st.caption("**재료 색 코딩 맵 (추천)** — 스케치업에서 같은 카메라로 재료마다 단색을 칠해 캡처한 이미지. "
+                       "AI가 색 영역 그대로 재료를 입혀서 '어디가 유리·목재인지' 헷갈리지 않아요.")
+            mf = st.file_uploader("재료 색 코딩 맵 이미지", type=["png", "jpg", "jpeg", "webp"], key="matmap_file")
+            m1, m2 = st.columns(2)
+            new_map = None
+            if mf and ss.get("matmap_id") != mf.file_id:
+                ss.matmap_id, new_map = mf.file_id, mf.getvalue()
+            if m1.button("📋 맵 붙여넣기"):
+                new_map = clipboard_or_warn()
+            if ss.material_map and m2.button("맵 지우기"):
+                ss.material_map, ss.material_legend = None, []
+                st.rerun()
+            if new_map:
+                old = dict(ss.material_legend)
+                ss.material_map = new_map
+                ss.material_legend = [(h, old.get(h, "")) for h, _ in drawing_tools.map_colors(new_map)]
+        if ss.material_map:
+            import pandas as pd
+
+            mc1, mc2 = st.columns([1, 2])
+            mc1.image(ss.material_map, caption="재료 색 코딩 맵", use_container_width=True)
+            with mc2:
+                st.markdown(" ".join(f"<span style='display:inline-block;width:18px;height:18px;background:{h};"
+                                     f"border:1px solid #888;margin-right:4px'></span>{h}"
+                                     for h, _ in ss.material_legend), unsafe_allow_html=True)
+                leg = st.data_editor(pd.DataFrame([{"색": h, "재료": m} for h, m in ss.material_legend]),
+                                     column_config={"색": st.column_config.TextColumn(disabled=True),
+                                                    "재료": st.column_config.TextColumn(required=False)},
+                                     hide_index=True, use_container_width=True,
+                                     key="legend_" + str(abs(hash(tuple(h for h, _ in ss.material_legend)))))
+                ss.material_legend = [(r["색"], str(r["재료"] or "")) for _, r in leg.iterrows()]
+                st.caption("색마다 재료를 적어주세요. 비워둔 색은 범례에서 빠져요.")
 
 MAX_PROJECT = 6
 with st.expander("📐 내 설계 자료 (선택) — 내 의도와 다른 내용이 나오지 않게",
@@ -838,6 +1003,17 @@ with c1:
     ref_bytes = ([f.getvalue() for f in refs] if refs else []) + ss.pasted_refs
     if ref_bytes:
         st.image(ref_bytes, width=90)
+    if ss.anchor:
+        a1, a2 = st.columns([1, 3])
+        a1.image(ss.anchor["png"], width=90)
+        with a2:
+            st.checkbox("⭐ 기준 컷을 레퍼런스로 사용 (같은 프로젝트 톤 맞추기)", value=True, key="use_anchor")
+            st.caption(f"기준 컷: {ss.anchor['note']}")
+            if st.button("기준 컷 해제"):
+                ss.anchor = None
+                st.rerun()
+        if anchor_on():
+            ref_bytes = ref_bytes + [ss.anchor["png"]]
 
     ss.mood = st_keyup(
         "원하는 느낌 (문장으로 자유롭게)",
@@ -911,7 +1087,10 @@ has_input = bool(goal_text() or ref_bytes or ss.mood or ss.picked or project_byt
 
 # ---------------------------------------------------------------- ③ 스케치 + 생성
 with c2:
-    st.subheader("③ 내 스케치" if not is_drawing else "③ 리터칭할 도면")
+    st.subheader(f"③ {INPUT_LABEL[work_type]}")
+    if is_render:
+        st.caption("스케치업·라이노에서 **그림자 끄고, 배경 단색, 화이트/클레이 모델**로 캡처하면 형태가 덜 바뀌어요. "
+                   "카메라는 장면(Named View)으로 저장해 두세요.")
     t_clip, t_dir, t_file, t_dxf = st.tabs(["📋 클립보드", "📁 폴더", "📄 파일", "📐 DXF 도면"])
     with t_clip:
         st.caption("**포토샵** Ctrl+Shift+C · **라이노** `ViewCaptureToClipboard` · "
@@ -974,7 +1153,7 @@ with c2:
                             st.error(f"도면을 그리지 못했어요: {str(e)[:150]}")
 
     if ss.sketch_bytes:
-        st.image(ss.sketch_bytes, caption=f"{'현재 스케치' if not is_drawing else '리터칭할 도면'} · {ss.sketch_src}",
+        st.image(ss.sketch_bytes, caption=f"{INPUT_LABEL[work_type]} · {ss.sketch_src}",
                  use_container_width=True)
 
     extra = st.text_input("추가 지시 (선택)", placeholder="예: 동선은 주황 화살표, 라벨은 영어로")
@@ -1094,9 +1273,17 @@ with c2:
             with st.expander("프롬프트 보기"):
                 st.code(ss.gpt_prompt, language=None, wrap_lines=True)
     elif st.button(f"✨ 다이어그램 생성 · {quality_label}", type="primary", disabled=not (ready and api_key)):
-        with st.spinner("다이어그램 생성 중... (30초~1분)"):
-            png = render(ss.sketch_bytes, ref_bytes, "Redraw IMAGE 1 as a finished diagram. " + extra)
-        register_result(png, "초기 생성")
+        if multipass:
+            base = ss.sketch_bytes
+            for k, (instr, pname) in enumerate(zip(prompts.PASSES_EN, prompts.PASS_NAMES)):
+                with st.spinner(f"🪜 {pname} 생성 중..."):
+                    png = render(base, ref_bytes, f"{instr} {extra}")
+                register_result(png, f"초기 생성 · {pname}", qa=k == 2 or pass_qa)
+                base = ss.versions[-1]["png"]
+        else:
+            with st.spinner("생성 중... (30초~1분)"):
+                png = render(ss.sketch_bytes, ref_bytes, "Redraw IMAGE 1 as a finished image. " + extra)
+            register_result(png, "초기 생성")
         ss.chat.append(("assistant", f"v{len(ss.versions)} 생성 완료. 수정할 점을 채팅으로 알려주세요."))
 
 # ---------------------------------------------------------------- ④ 결과 (버전 목록: 새 버전은 아래에 추가)
@@ -1120,6 +1307,23 @@ if ss.versions:
             left, right = st.columns([3, 2])
             with left:
                 st.image(v["png"], caption=f"v{i + 1} · {v['note']}", use_container_width=True)
+                b4, b5 = st.columns(2)
+                if b4.button("🔍 형태 비교", key=f"diff_{i}", disabled=not ss.sketch_bytes,
+                             help="입력과 결과의 윤곽선을 겹쳐 비교: 빨강 = 사라진 윤곽, 파랑 = 새로 생긴 윤곽"):
+                    compute_diff(v)
+                    st.rerun()
+                if b5.button("⭐ 기준 컷으로 지정", key=f"anchor_{i}",
+                             help="이 이미지를 같은 프로젝트의 기준 컷으로 저장해서, 다음 컷 생성 때 레퍼런스로 자동 첨부"):
+                    ss.anchor = {"png": v["png"], "note": f"v{i + 1} · {v['note']}"}
+                    st.toast("기준 컷으로 지정했어요. 다음 생성부터 레퍼런스로 함께 보내요.")
+                    st.rerun()
+                if (v.get("diff") or {}).get("png"):
+                    with st.expander(f"🔍 형태 비교 · 사라진 윤곽 {v['diff']['pct']}% ({v['diff']['how']})"):
+                        st.image(v["diff"]["png"], caption="빨강 = 모델에 있었는데 사라진 윤곽 · 파랑 = 새로 생긴 윤곽 "
+                                                            "(질감·사람·나무로 생긴 작은 파랑은 정상)",
+                                 use_container_width=True)
+                elif v.get("diff"):
+                    st.caption(v["diff"]["how"])
                 b1, b2, b3 = st.columns(3)
                 if b3.button("📐 원본 선 덮기", key=f"lock_{i}", disabled=not ss.sketch_bytes,
                              help="이 이미지 위에 원본 도면/스케치의 선을 겹친 새 버전을 아래에 추가해요"):

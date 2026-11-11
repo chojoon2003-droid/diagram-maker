@@ -18,6 +18,11 @@ TYPE_EN = {
     "절단면 포셰 강조": "solid poché of cut elements", "지반·지형": "ground & terrain", "빛·환경 흐름": "light & environmental flows",
     "사람·스케일": "people & scale", "단면 투시(깊이감)": "section perspective depth", "재료·구조": "materials & structure",
     "배경·하늘": "background & sky",
+    # 렌더링
+    "주간 (맑음)": "clear daylight", "골든아워": "golden hour, warm low sun", "야경": "night view with interior glow",
+    "흐림·비": "overcast / light rain mood", "계절감": "seasonal atmosphere", "눈높이 컷": "eye-level shot",
+    "조감 컷": "aerial / bird's-eye shot", "디테일 컷": "close-up detail shot", "첨경 많이": "lively, many people",
+    "첨경 적게": "calm, few people",
 }
 QUALITY_EN = {
     "초안 (빠름)": "Quick rough draft quality (minimal detail).",
@@ -69,21 +74,23 @@ DETAIL_KO = {
 
 
 # ---------------------------------------------------------------- 작업 종류 · 형태 변형 단계
-WORK_TYPES = ["다이어그램", "평면 리터칭", "단면 리터칭"]
+WORK_TYPES = ["다이어그램", "평면 리터칭", "단면 리터칭", "렌더링"]
 WORK_EN = {
     "다이어그램": "ARCHITECTURAL DIAGRAM",
     "평면 리터칭": "FLOOR PLAN (a retouched rendering of my own drawing)",
     "단면 리터칭": "SECTION drawing (a retouched rendering of my own drawing)",
+    "렌더링": "PHOTOREALISTIC ARCHITECTURAL RENDERING of my 3D model view",
 }
 WORK_KO = {"다이어그램": "발표용 건축 다이어그램", "평면 리터칭": "발표용 평면도 (내 도면 리터칭)",
-           "단면 리터칭": "발표용 단면도 (내 도면 리터칭)"}
+           "단면 리터칭": "발표용 단면도 (내 도면 리터칭)", "렌더링": "실사 건축 렌더링 (내 3D 모델 뷰)"}
 INPUT_EN = {
     "다이어그램": "CONTENT to draw (rough hand sketch or 3D model screenshot)",
     "평면 리터칭": "MY FLOOR PLAN DRAWING to retouch",
     "단면 리터칭": "MY SECTION DRAWING to retouch",
+    "렌더링": "MY 3D MODEL VIEW to render (white/clay model capture — the geometry and camera are final)",
 }
 INPUT_KO = {"다이어그램": "그릴 내용 (손스케치 / 3D 캡처)", "평면 리터칭": "리터칭할 내 평면도",
-            "단면 리터칭": "리터칭할 내 단면도"}
+            "단면 리터칭": "리터칭할 내 단면도", "렌더링": "렌더링할 내 3D 모델 뷰 (화이트/클레이 모델 캡처 — 형태와 카메라 확정)"}
 DRAWING_RULES_EN = {
     "평면 리터칭": ("Treat it as an orthographic FLOOR PLAN: keep it strictly top-down (no perspective, no 3D), keep the "
                  "exact walls and wall thickness, doors and swings, windows, stairs, columns/grid, room names and areas. "
@@ -94,12 +101,19 @@ DRAWING_RULES_EN = {
                  "profile, ground line and level marks. Retouch only by rendering: solid poché of cut elements, ground "
                  "hatch, lighter elements beyond, sky/background, people for scale, light — as the style asks."),
 }
+DRAWING_RULES_EN["렌더링"] = (
+    "Treat it as a FINAL CAMERA VIEW: keep exactly the same viewpoint, focal length, perspective, horizon and framing. "
+    "Keep the building geometry exactly: massing, edges, roof lines, floor lines, the number, size and pattern of "
+    "windows, doors and mullions. Render photorealistic materials, lighting, sky, context and entourage on top. "
+    "Do not add, remove or reshape any part of the building.")
 DRAWING_RULES_KO = {
     "평면 리터칭": ("정사영 평면도로 취급: 위에서 본 그대로(투시·3D 금지), 벽과 벽 두께, 문과 문 열림, 창, 계단, 기둥·그리드, "
                  "실명·면적을 정확히 유지. 리터칭은 표현만: 절단 벽 포셰, 실별 색, 바닥 재질, 가구·조경, 부드러운 그림자."),
     "단면 리터칭": ("정사영 단면도로 취급: 보는 방향 그대로(원래 단면투시가 아니면 투시 금지), 층 레벨, 슬래브·벽 두께, 절단면, "
                  "개구부, 지붕선, 지반선, 레벨 표기를 유지. 리터칭은 표현만: 절단 부재 포셰, 지반 해치, 원경 요소는 옅게, "
                  "하늘·배경, 스케일용 사람, 빛."),
+    "렌더링": ("확정된 카메라 뷰로 취급: 시점·화각·투시·지평선·프레이밍을 그대로. 건물 형태(매스, 모서리, 지붕선, 층 라인, "
+             "창·문·멀리언의 개수·크기·패턴)를 그대로 두고 실사 재료·조명·하늘·주변·첨경만 입힐 것. 건물 부분 추가·삭제·변형 금지."),
 }
 FORM_LABELS = ["① 완전 고정", "② 선 정리", "③ 비율 다듬기", "④ 구성 정리", "⑤ 재해석"]
 FORM_HELP = [
@@ -172,6 +186,35 @@ def facts_ko(s: "Spec") -> str:
     return "\n".join(lines)
 
 
+def render_en(s: "Spec") -> str:
+    """렌더링 전용: 재료 지정·재료 색 코딩 맵·기준 컷 블록"""
+    lines = []
+    if s.materials.strip():
+        lines.append("MATERIALS (apply exactly these; do not invent other materials):\n" + s.materials.strip()[:1500])
+    if s.has_material_map:
+        legend = "; ".join(f"{h} = {m}" for h, m in s.material_legend if m.strip()) or "(see colors)"
+        lines.append("MATERIAL ID MAP: 4_material_map.png is the SAME camera view where each flat color marks one "
+                     f"material. Apply each material exactly inside its color region: {legend}. "
+                     "Do not render the flat colors themselves.")
+    return "\n".join(lines)
+
+
+def render_ko(s: "Spec") -> str:
+    lines = []
+    if s.materials.strip():
+        lines.append("[재료 — 이것만 정확히 적용, 다른 재료 지어내지 말 것]\n" + s.materials.strip()[:1500])
+    if s.has_material_map:
+        legend = "; ".join(f"{h} = {m}" for h, m in s.material_legend if m.strip()) or "(색 참고)"
+        lines.append("[재료 색 코딩 맵] 4_material_map.png는 같은 카메라 뷰에서 재료마다 단색으로 칠한 그림. "
+                     f"각 색 영역에 해당 재료를 정확히 입힐 것: {legend}. 단색 자체를 그리지는 말 것.")
+    return "\n".join(lines)
+
+
+ANCHOR_EN = ("The LAST style reference is an APPROVED SHOT of this same project: match its materials, lighting, color "
+             "grading, sky and entourage style exactly so the shots look like one set.")
+ANCHOR_KO = "마지막 스타일 레퍼런스는 같은 프로젝트의 확정 컷: 재료·조명·색감·하늘·첨경 스타일을 똑같이 맞춰 한 세트처럼 보이게."
+
+
 def ref_names(n: int) -> str:
     return ", ".join(f"2_reference_{i}.png" for i in range(1, n + 1))
 
@@ -198,6 +241,10 @@ class Spec:
     extra: str = ""
     style_strength: str = "균형"  # 구조 우선 / 균형 / 스타일 우선
     detail: str = "사실적 (과한 디테일 없이)"  # DETAIL_LEVELS
+    materials: str = ""  # 렌더링: 재료 지정 글 (예: 외벽: 노출콘크리트)
+    material_legend: list = field(default_factory=list)  # 렌더링: [(hex, 재료)] 재료 색 코딩 맵 범례
+    has_material_map: bool = False
+    has_anchor: bool = False  # 마지막 레퍼런스 = 같은 프로젝트의 기준 컷
     project_text: str = ""  # 내 설계의 프로그램·설계 논리 글
     n_project: int = 0  # 첨부하는 내 설계 도면/다이어그램 장수
     facts_strict: bool = True  # 설계 자료에 없는 내용 추가 금지
@@ -267,6 +314,8 @@ def structure_en(s: Spec) -> str:
 
 def style_en(s: Spec) -> str:
     lines = [f"- Reference strength ({s.style_strength}): {STRENGTH_EN[s.style_strength]}"]
+    if s.has_anchor:
+        lines.append("- " + ANCHOR_EN)
     if s.keywords:
         lines.append("- Style keywords: " + ", ".join(en(k) for k in s.keywords))
     if s.mood:
@@ -291,6 +340,9 @@ def chatgpt_en(s: Spec, n_refs: int, board: bool) -> str:
         images += " Panels labeled 'PROJECT n = FACTS' are my own design drawings: content facts only."
     elif s.n_project:
         images += f"\n- {project_names(s.n_project)} = MY DESIGN DRAWINGS (content facts only, not style)"
+    if s.has_material_map:
+        images += ("\n- 4_material_map.png = MATERIAL ID MAP (same camera; flat colors = materials)" if not board
+                   else " The panel labeled 'MATERIAL MAP' is a material ID map of the same camera view.")
     aspect = f" Aspect ratio: {ASPECT_EN[s.aspect]}." if ASPECT_EN.get(s.aspect) else ""
     think = f"\n{THINK_EN[s.think]}" if THINK_EN.get(s.think) else ""
     steps = "Generate the image."
@@ -301,12 +353,13 @@ If the images are not attached yet, reply only "이미지를 첨부해 주세요
 ATTACHED
 {images}
 
-PRIORITY 1 — what the diagram must communicate (overrides style):
+PRIORITY 1 — what it must communicate (overrides style):
 {goal_en(s)}
 {facts_en(s)}
 
 PRIORITY 2 — structure:
 {structure_en(s)}
+{render_en(s)}
 
 {style_header_en(s)}
 {style_en(s)}
@@ -336,12 +389,16 @@ def chatgpt_ko(s: Spec, n_refs: int, board: bool) -> str:
         images += " 'PROJECT n = FACTS' 칸은 내 설계 도면: 내용의 기준으로만 사용."
     elif s.n_project:
         images += f"\n- {project_names(s.n_project)} = 내 설계 도면 (내용의 기준, 스타일 아님)"
+    if s.has_material_map:
+        images += ("\n- 4_material_map.png = 재료 색 코딩 맵 (같은 카메라, 단색 = 재료)" if not board
+                   else " 'MATERIAL MAP' 칸은 같은 카메라의 재료 색 코딩 맵.")
     goal = "\n".join(x for x in [
         f"- 유형: {', '.join(s.types)}" if s.types else "",
         f"- 설명: {s.goal}" if s.goal else "",
     ] if x) or "- 스케치를 보고 판단"
     style = "\n".join(x for x in [
         f"- 레퍼런스 강도({s.style_strength}): {STRENGTH_KO[s.style_strength]}",
+        f"- {ANCHOR_KO}" if s.has_anchor else "",
         f"- 스타일 키워드: {', '.join(s.keywords)}" if s.keywords else "",
         f"- 원하는 느낌: {s.mood}" if s.mood else "",
         f"- 스타일 가이드:\n{s.style_guide}" if s.style_guide else "",
@@ -357,11 +414,12 @@ def chatgpt_ko(s: Spec, n_refs: int, board: bool) -> str:
 [첨부]
 {images}
 
-[1순위 · {"어떤 다이어그램인지" if s.work_type == "다이어그램" else "어떤 리터칭인지"} — 스타일보다 우선]
+[1순위 · {"어떤 다이어그램인지" if s.work_type == "다이어그램" else ("어떤 렌더링인지" if s.work_type == "렌더링" else "어떤 리터칭인지")} — 스타일보다 우선]
 {goal}
 {facts_ko(s)}
 
 [2순위 · 구조] {rule}
+{render_ko(s)}
 
 [3순위 · 스타일 — {"엄격히 따를 것 (형태는 스케치 유지)" if s.style_strength == "스타일 우선" else "1, 2순위와 충돌하지 않는 범위에서"}]
 {style}
@@ -388,12 +446,13 @@ def image_api(s: Spec, n_refs: int, task: str) -> str:
 IMAGE 1 = {INPUT_EN[s.work_type]} (or a previous version of the result).
 {refs}
 
-PRIORITY 1 — what this diagram must communicate (overrides style):
+PRIORITY 1 — what it must communicate (overrides style):
 {goal_en(s)}
 {facts_en(s).replace(project_names(s.n_project), "the design drawings") if s.n_project else facts_en(s)}
 
 PRIORITY 2 — structure:
 {structure_en(s)}
+{render_en(s).replace("4_material_map.png", "the material ID map image (last image)")}
 
 {style_header_en(s)}
 {style_en(s)}
@@ -405,13 +464,16 @@ Task: {task}
 
 
 # ---------------------------------------------------------------- Claude(구독)에게 보낼 검토 요청
-def claude_review_request(draft: str, context_ko: str, n_refs: int, board: bool, n_project: int = 0) -> str:
+def claude_review_request(draft: str, context_ko: str, n_refs: int, board: bool, n_project: int = 0,
+                          has_map: bool = False) -> str:
     if board:
         att = ("ONE board image: left panel 'SKETCH' = content to draw, right panels 'REF n' = style references"
                + (", 'PROJECT n' panels = my design drawings (content facts)." if n_project else "."))
     else:
         att = f"Image 1 = SKETCH (content to draw)" + (f", images 2–{n_refs + 1} = style REFERENCES" if n_refs else "")
         att += (f", images {n_refs + 2}–{n_refs + 1 + n_project} = MY DESIGN DRAWINGS (content facts)." if n_project else ".")
+    if has_map:
+        att += " The last image (or the 'MATERIAL MAP' panel) is a MATERIAL ID MAP of the same camera view."
     return f"""Act as a senior architectural-diagram art director and prompt engineer.
 I will paste the images right after this message. If they are not attached yet, reply only "이미지를 첨부해 주세요" and wait.
 Attached: {att}
@@ -422,6 +484,7 @@ Review the DRAFT prompt below (it will be pasted into ChatGPT together with the 
 3. Fix conflicts between the goal, keywords, mood, style strength and references; remove vague or redundant wording.
 4. If project documents are given (my design drawings and/or program text): extract the FACTS (program and space names, numbers, areas, floor counts, labels, key design logic), state the ones the diagram needs in the prompt, and remove or correct anything that contradicts them or is not supported by them.
 5. If the work type is a floor plan or section retouch: make sure the prompt locks the drawing geometry (walls, openings, levels, text) at the chosen form change level and only lists rendering operations.
+7. If the work type is a rendering: make sure the prompt locks the camera and building geometry (opening counts, mullion pattern, edges), states the materials exactly (and the material ID map legend if given), one consistent light direction and time of day.
 6. Respect the detail level: do not add requests for extra detail (e.g. clothing fabric, faces, textures on entourage). Keep the prompt's "WORK EFFICIENTLY" line so the image model makes one image without self-review.
 Keep the draft's language, its attachment description, its missing-image guard lines and the "reply in Korean" line. Keep it under ~2,500 characters. Do not invent design content.
 
@@ -439,10 +502,11 @@ MARK_START, MARK_END = "=== IMPROVED PROMPT START ===", "=== IMPROVED PROMPT END
 
 
 def claude_cli_request(draft: str, context_ko: str, sketch: str, refs: list[str],
-                       projects: list[str] | None = None) -> str:
+                       projects: list[str] | None = None, extras: list[tuple[str, str]] | None = None) -> str:
     files = f"- {sketch} = SKETCH (content to draw)\n" + "".join(f"- {r} = REFERENCE {i} (style only)\n"
                                                               for i, r in enumerate(refs, 1))
     files += "".join(f"- {p} = MY DESIGN DRAWING {i} (content facts)\n" for i, p in enumerate(projects or [], 1))
+    files += "".join(f"- {n} = {label}\n" for n, label in extras or [])
     return f"""Act as a senior architectural-diagram art director and prompt engineer.
 The images are files in the current directory. Use the Read tool to look at EVERY one of them before reviewing:
 {files}
@@ -452,6 +516,7 @@ Review the DRAFT prompt below. It will be sent to ChatGPT/Codex (image generatio
 3. Fix conflicts between the goal, keywords, mood, style strength and references; remove vague or redundant wording.
 4. If project documents are given (my design drawings and/or program text): extract the FACTS (program and space names, numbers, areas, floor counts, labels, key design logic), state the ones the diagram needs in the prompt, and remove or correct anything that contradicts them or is not supported by them.
 5. If the work type is a floor plan or section retouch: make sure the prompt locks the drawing geometry (walls, openings, levels, text) at the chosen form change level and only lists rendering operations.
+7. If the work type is a rendering: make sure the prompt locks the camera and building geometry (opening counts, mullion pattern, edges), states the materials exactly (and the material ID map legend if given), one consistent light direction and time of day.
 6. Respect the detail level: do not add requests for extra detail (e.g. clothing fabric, faces, textures on entourage). Keep the prompt's "WORK EFFICIENTLY" line so the image model makes one image without self-review.
 Keep the draft's language, its attachment description (file names), and the "reply in Korean" line. Keep it under ~2,500 characters. Do not invent design content. Do not edit or create any files.
 
@@ -478,16 +543,18 @@ QA_CRITERIA = """Check the GENERATED result against:
 4. Quality: garbled or misspelled text, broken geometry, artifacts, missing or duplicated parts, inconsistent color meaning.
 5. Facts: if project documents are given, every program/space name, number, floor count, label and design move in the result must be supported by them or the sketch. Flag anything invented or contradicting them.
 6. Drawing accuracy (when the work type is a floor plan or section retouch): compared with the original drawing (SKETCH), walls and their thickness, doors, windows, stairs, columns/grid, levels, room names, areas and dimensions must be unchanged and the view must stay orthographic. Flag any moved, missing, added or distorted element.
+7. Rendering (when the work type is a rendering): same camera/viewpoint/perspective as the model view; massing, edges and roof lines unchanged; number, size and pattern of windows, doors and mullions unchanged; materials match the specified materials / material ID map; one consistent light and shadow direction; people and cars at correct scale; no AI artifacts (warped or melted geometry, bent windows, garbled text). If a DIFF MAP is given: red = model edges missing in the result, blue = new edges in the result — use it to locate geometry changes (small noise from textures, people and trees is normal).
 Respect the form change level in the user settings: at levels 1-2 any geometric change is a problem; at levels 4-5 simplification is allowed but the concept must remain.
 Respect the detail level in the user settings: never ask for more detail than it allows (simple, realistic entourage without clothing textures or faces is intended); flag excessive detail only if it distracts from the message.
 Only flag problems that clearly matter for a presentation drawing. If it is good enough, PASS."""
 
 
 def qa_request_cli(result: str, sketch: str, refs: list[str], context_ko: str, prompt_used: str,
-                   projects: list[str] | None = None) -> str:
-    files = (f"- {result} = GENERATED RESULT (to check)\n- {sketch} = original SKETCH\n"
+                   projects: list[str] | None = None, extras: list[tuple[str, str]] | None = None) -> str:
+    files = (f"- {result} = GENERATED RESULT (to check)\n- {sketch} = original SKETCH / input\n"
              + "".join(f"- {r} = STYLE REFERENCE {i}\n" for i, r in enumerate(refs, 1))
-             + "".join(f"- {p} = MY DESIGN DRAWING {i} (content facts)\n" for i, p in enumerate(projects or [], 1)))
+             + "".join(f"- {p} = MY DESIGN DRAWING {i} (content facts)\n" for i, p in enumerate(projects or [], 1))
+             + "".join(f"- {n} = {label}\n" for n, label in extras or []))
     return f"""You are QA-checking an AI-generated architectural diagram before it is used in a presentation.
 The images are files in the current directory. Use the Read tool to look at EVERY one of them:
 {files}
@@ -509,3 +576,15 @@ USER SETTINGS:
 
 PROMPT THAT WAS USED TO GENERATE IT:
 {prompt_used}"""
+
+
+# ---------------------------------------------------------------- 렌더링: 나눠서 생성 (3단계)
+PASSES_EN = [
+    "PASS 1 of 3 — BUILDING ONLY: apply the materials and the lighting to the building. Keep the sky and surroundings "
+    "plain and neutral (light grey). No people, no cars, no trees.",
+    "PASS 2 of 3 — SKY & CONTEXT: edit the attached image. Add the sky, ground, landscape and surrounding context in "
+    "the same light. Keep the building exactly as it is (geometry, materials, lighting). Still no people or cars.",
+    "PASS 3 of 3 — ENTOURAGE: edit the attached image. Add people, cars and small landscape elements at correct scale "
+    "following the detail level. Keep everything else exactly as it is.",
+]
+PASS_NAMES = ["1/3 건물 재료·조명", "2/3 하늘·배경", "3/3 첨경"]

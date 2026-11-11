@@ -217,10 +217,12 @@ def copy_files(paths: list[Path]) -> None:
         raise RuntimeError("이 운영체제에서는 파일 복사를 지원하지 않아요.")
 
 
-def make_board(sketch: bytes, refs: list[bytes], projects: list[bytes] | None = None) -> bytes:
+def make_board(sketch: bytes, refs: list[bytes], projects: list[bytes] | None = None,
+               extras: list[tuple[bytes, str]] | None = None) -> bytes:
     """스케치(왼쪽, 크게) + 레퍼런스·내 설계 도면(오른쪽, 작게)을 라벨과 함께 한 장으로 합침."""
     side = [(b, f"REF {i} = STYLE ONLY", "blue") for i, b in enumerate(refs, 1)]
     side += [(b, f"PROJECT {i} = FACTS", "green") for i, b in enumerate(projects or [], 1)]
+    side += [(b, label, "purple") for b, label in extras or []]
     from PIL import ImageDraw, ImageFont
 
     H, gap, label_h = 1400, 24, 56

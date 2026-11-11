@@ -75,13 +75,16 @@ def _image_block(data: bytes) -> dict:
 
 
 def review(api_key: str, model: str, effort: str, draft: str, context_ko: str,
-           sketch: bytes, refs: list[bytes], projects: list[bytes] | None = None) -> dict:
+           sketch: bytes, refs: list[bytes], projects: list[bytes] | None = None,
+           extras: list[tuple[bytes, str]] | None = None) -> dict:
     """반환: SCHEMA 형태의 dict (+ 'model_used'). 실패 시 RuntimeError(한국어 메시지)."""
     content: list[dict] = [{"type": "text", "text": "SKETCH (content to draw):"}, _image_block(sketch)]
     for i, b in enumerate(refs, 1):
         content += [{"type": "text", "text": f"REF {i} (style only):"}, _image_block(b)]
     for i, b in enumerate(projects or [], 1):
         content += [{"type": "text", "text": f"MY DESIGN DRAWING {i} (content facts, not style):"}, _image_block(b)]
+    for b, label in extras or []:
+        content += [{"type": "text", "text": f"{label}:"}, _image_block(b)]
     content.append({"type": "text", "text": f"USER SETTINGS (Korean):\n{context_ko}\n\nDRAFT PROMPT:\n<<<\n{draft}\n>>>"})
 
     params = dict(
@@ -141,7 +144,8 @@ QA_SCHEMA = {
 
 
 def qa(api_key: str, model: str, effort: str, result_png: bytes, sketch: bytes, refs: list[bytes],
-       context_ko: str, prompt_used: str, projects: list[bytes] | None = None) -> dict:
+       context_ko: str, prompt_used: str, projects: list[bytes] | None = None,
+       extras: list[tuple[bytes, str]] | None = None) -> dict:
     """생성 결과 검수 (API). 반환: {"verdict": "pass"|"revise", "issues_ko", "revision_prompt"}"""
     import prompts
 
@@ -151,6 +155,8 @@ def qa(api_key: str, model: str, effort: str, result_png: bytes, sketch: bytes, 
         content += [{"type": "text", "text": f"REF {i}:"}, _image_block(b)]
     for i, b in enumerate(projects or [], 1):
         content += [{"type": "text", "text": f"MY DESIGN DRAWING {i} (content facts):"}, _image_block(b)]
+    for b, label in extras or []:
+        content += [{"type": "text", "text": f"{label}:"}, _image_block(b)]
     content.append({"type": "text", "text": (
         f"{prompts.QA_CRITERIA}\n\nWrite issues_ko in Korean (numbered list, or '문제 없음'). If verdict is revise, "
         "revision_prompt is a concise English instruction for an image model that will EDIT the result image: start "
