@@ -9,3 +9,4 @@ pypdf
 python-docx
 ezdxf
 matplotlib
+opencv-python-headless

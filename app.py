@@ -23,10 +23,11 @@ import io_bridge as bridge
 import cad_import
 import claude_cli
 import claude_review
+import drawing_tools
 import codex_bridge
 import llm
 import prompts
-from keywords import DEFAULT_KEYWORDS, ko, suggest_by_phrase, suggest_for_phrase
+from keywords import DEFAULTS_BY_WORK, ko, suggest_by_phrase, suggest_for_phrase
 
 APP_DIR = Path(__file__).parent
 KEY_FILE = APP_DIR / "api_key.txt"
@@ -40,6 +41,8 @@ CLAUDE_URL = "https://claude.ai/new"
 DEFAULT_INBOX = APP_DIR / "inbox"
 DEFAULT_INBOX.mkdir(exist_ok=True)
 
+PLAN_TYPES = ["실별 색 구분", "가구·인테리어", "조경·외부공간", "바닥 재질", "그림자·깊이감", "흑백 포셰 강조", "동선 표시"]
+SECTION_TYPES = ["절단면 포셰 강조", "지반·지형", "빛·환경 흐름", "사람·스케일", "단면 투시(깊이감)", "재료·구조", "배경·하늘"]
 DIAGRAM_TYPES = ["매스 형성 과정", "프로그램 조닝", "동선", "분해 액소", "환경 (빛·바람)",
                  "단면 다이어그램", "배치·맥락", "구조·재료", "컨셉 다이어그램", "단계별 시퀀스"]
 QUALITY = {  # 화면 표시: (API quality, ChatGPT 지시문)
@@ -54,6 +57,11 @@ st.markdown(  # 키워드 버튼이 옆으로 잘리지 않고 줄바꿈되게
     "<style>[data-testid='stButtonGroup'] > div {flex-wrap: wrap; overflow-x: visible;}</style>",
     unsafe_allow_html=True,
 )
+
+st.title("🏛️ 건축 다이어그램 에이전트")
+work_type = st.radio("작업 종류", prompts.WORK_TYPES, horizontal=True, key="work_type",
+                     help="다이어그램: 스케치를 다이어그램으로\n\n평면·단면 리터칭: 내 도면의 선은 그대로 두고 색·질감·그림자·첨경을 입혀요")
+is_drawing = work_type != "다이어그램"
 
 ss = st.session_state
 for k, v in {
@@ -183,11 +191,21 @@ with st.sidebar:
                                  "생성이 실패해도 알려줘요.")
     quality_label = st.select_slider("화질", options=list(QUALITY), value="표준")
     aspect = st.selectbox("비율", list(ASPECT), index=1)
-    fidelity = st.radio(
-        "스케치 구조 유지",
-        ["엄격 (선·비율 그대로)", "보통 (정리 허용)"],
-        help="엄격: 매스·동선·배치를 바꾸지 않음. 보통: 선을 정돈하고 비율을 다듬는 것 허용.",
+    form_label = st.select_slider(
+        "형태 변형 단계", options=prompts.FORM_LABELS,
+        value=prompts.FORM_LABELS[0 if is_drawing else 1], key=f"form_{work_type}",
+        help="\n\n".join(f"{lab}: {h}" for lab, h in zip(prompts.FORM_LABELS, prompts.FORM_HELP)),
     )
+    form_level = prompts.FORM_LABELS.index(form_label)
+    st.caption(prompts.FORM_HELP[form_level])
+    line_lock = st.checkbox("📐 원본 선 고정 합성", value=is_drawing, key=f"lock_{work_type}",
+                            help="AI 결과 위에 원본 도면/스케치의 선을 다시 겹쳐서, AI가 선을 틀어도 최종본의 선은 원본과 같게 해요. "
+                                 "AI 원본과 선 고정본이 둘 다 결과 목록에 추가돼요.")
+    lock_opacity, lock_threshold = 1.0, 150
+    if line_lock:
+        lock_opacity = st.slider("선 진하기", 0.3, 1.0, 1.0, 0.05, help="1.0이면 원본 선을 그대로, 낮추면 AI 표현과 섞여요")
+        lock_threshold = st.slider("선 인식 감도", 80, 220, 150, 10,
+                                   help="높일수록 옅은 선(해치·가는 선)까지 원본에서 가져와요. 회색 바탕이 덮이면 낮추세요.")
     style_strength = st.select_slider(
         "레퍼런스 스타일 강도", options=["구조 우선", "균형", "스타일 우선"], value="균형",
         help="구조 우선: 레퍼런스는 느슨한 참고\n\n균형: 색·선·라벨·화살표를 가깝게 따름\n\n"
@@ -307,8 +325,8 @@ def gemini_suggest(text: str, goal: str, key: str, model: str, fallbacks: tuple[
 # ---------------------------------------------------------------- 프롬프트 재료
 def goal_text() -> str:
     parts = []
-    if ss.get("diagram_types"):
-        parts.append("유형: " + ", ".join(ss.diagram_types))
+    if current_types():
+        parts.append(("유형: " if not is_drawing else "리터칭 초점: ") + ", ".join(current_types()))
     if ss.get("diagram_goal"):
         parts.append("설명: " + ss.diagram_goal)
     return "\n".join(parts)
@@ -335,12 +353,16 @@ def to_png_file(data: bytes, name: str) -> tuple[str, bytes, str]:
 
 def spec(extra: str = "") -> prompts.Spec:
     return prompts.Spec(
-        types=list(ss.get("diagram_types") or []), goal=ss.get("diagram_goal", ""), mood=ss.mood,
-        keywords=list(ss.picked), style_guide=ss.style_guide, strict=fidelity.startswith("엄격"),
+        types=current_types(), goal=ss.get("diagram_goal", ""), mood=ss.mood,
+        keywords=list(ss.picked), style_guide=ss.style_guide, strict=form_level <= 1,
         quality=quality_label, aspect=aspect, think=think, extra=extra, style_strength=style_strength,
         project_text=ss.get("project_text", ""), n_project=len(project_bytes),
-        facts_strict=ss.get("facts_strict", True),
+        facts_strict=ss.get("facts_strict", True), work_type=work_type, form_level=form_level,
     )
+
+
+def current_types() -> list[str]:
+    return list(ss.get(f"types_{work_type}") or [])
 
 
 def project_items() -> list[tuple[str, bytes]]:
@@ -385,11 +407,12 @@ def copy_attachments() -> None:
 
 def review_context() -> str:
     return "\n".join([
-        f"- 다이어그램 유형: {', '.join(ss.get('diagram_types') or []) or '미지정'}",
+        f"- 작업 종류: {work_type} / 유형·초점: {', '.join(current_types()) or '미지정'}",
         f"- 다이어그램 설명: {ss.get('diagram_goal') or '없음'}",
         f"- 원하는 느낌: {ss.mood or '없음'}",
         f"- 선택 키워드: {', '.join(ss.picked) or '없음'}",
-        f"- 스케치 구조 유지: {fidelity} / 레퍼런스 스타일 강도: {style_strength}",
+        f"- 형태 변형 단계: {form_label} ({form_level + 1}/5) — {prompts.FORM_HELP[form_level]}",
+        f"- 레퍼런스 스타일 강도: {style_strength} / 원본 선 고정 합성: {'켜짐' if line_lock else '꺼짐'}",
         f"- 이미지 첨부 방식: {attach_mode} / 화질: {quality_label} / 비율: {aspect} / 생각 수준: {think}",
         f"- 내 설계 자료: 도면 {len(project_bytes)}장, 설계 글 {'있음' if ss.get('project_text', '').strip() else '없음'}"
         f" / 없는 내용 추가 금지: {'예' if ss.get('facts_strict', True) else '아니오'}",
@@ -491,7 +514,7 @@ def _codex_call(prompt: str, images: list[str], note: str, session: str | None) 
         return False
     ss.codex_session, ss.codex_log = res["session_id"], res["log"]
     ss.chat.append(("assistant", f"v{len(ss.versions) + 1} 완료 ({note})."))
-    add_version(res["png"], note, prompt=prompt)
+    register_result(res["png"], note, prompt=prompt)
     return True
 
 
@@ -585,14 +608,24 @@ def send_to_chatgpt(ref_bytes: list[bytes], extra: str) -> None:
     ss.opened = bridge.open_url(url, prefer_chrome=open_target != "기본 브라우저")
 
 
-def add_version(png: bytes, note: str, prompt: str = "") -> None:
+def register_result(png: bytes, note: str, prompt: str = "") -> None:
+    """AI가 만든 새 이미지를 등록. 선 고정 합성이 켜져 있으면 'AI 원본'과 '원본 선 고정본'을 둘 다 추가."""
+    if line_lock and ss.get("sketch_bytes"):
+        add_version(png, f"{note} · AI 원본", prompt, qa=False, notify=False)
+        locked, how = drawing_tools.lock_lines(png, ss.sketch_bytes, lock_opacity, lock_threshold)
+        add_version(locked, f"{note} · 원본 선 고정 ({how})", prompt)
+    else:
+        add_version(png, note, prompt)
+
+
+def add_version(png: bytes, note: str, prompt: str = "", qa: bool = True, notify: bool = True) -> None:
     """새 버전을 목록 맨 아래에 추가 (기존 버전은 그대로). 자동 검수가 켜져 있으면 바로 Claude 검수."""
     ss.versions.append({"png": png, "note": note, "prompt": prompt or ss.get("gpt_prompt", ""), "qa": None})
     saved = bridge.save_output(OUT_DIR, png, len(ss.versions))
     n = len(ss.versions)
-    if auto_qa and qa_engine()[0] and ss.get("sketch_bytes"):
+    if qa and auto_qa and qa_engine()[0] and ss.get("sketch_bytes"):
         run_qa(n - 1)
-    if notify_on:
+    if notify and notify_on:
         qa = ss.versions[-1].get("qa")
         if not qa:
             title, body = f"🖼️ v{n} 완성", note
@@ -674,29 +707,31 @@ def regenerate_from_qa(i: int) -> bool:
     if use_api:
         with st.spinner(f"v{i + 1} 검수 수정안으로 다시 생성 중..."):
             png = render(v["png"], ref_bytes, text)
-        add_version(png, note, prompt=text)
+        register_result(png, note, prompt=text)
         return True
     return False
 
 
 def import_result(note: str) -> None:
     if b := clipboard_or_warn():
-        add_version(b, note)
+        register_result(b, note)
         st.toast(f"v{len(ss.versions)}로 가져왔어요.")
         st.rerun()
 
 
 # ================================================================ UI
-st.title("🏛️ 건축 다이어그램 에이전트")
-
 # ---------------------------------------------------------------- ① 어떤 다이어그램
-st.subheader("① 어떤 다이어그램인가요?  (가장 우선)")
-st.pills("유형 (여러 개 선택 가능)", DIAGRAM_TYPES, selection_mode="multi", key="diagram_types")
+TYPE_OPTIONS = {"다이어그램": DIAGRAM_TYPES, "평면 리터칭": PLAN_TYPES, "단면 리터칭": SECTION_TYPES}
+st.subheader("① 어떤 다이어그램인가요?  (가장 우선)" if not is_drawing else f"① 어떤 {work_type}인가요?  (가장 우선)")
+st.pills("유형 (여러 개 선택 가능)" if not is_drawing else "리터칭 초점 (여러 개 선택 가능)",
+         TYPE_OPTIONS[work_type], selection_mode="multi", key=f"types_{work_type}")
 st.text_area(
-    "무엇을 보여주는 다이어그램인지",
+    "무엇을 보여주는 다이어그램인지" if not is_drawing else "이 도면으로 무엇을 보여주고 싶은지",
     key="diagram_goal",
     height=80,
-    placeholder="예: 대지 경사를 따라 매스가 3단계로 쪼개지며 중정이 생기는 과정. 1층은 공용, 2~3층은 주거.",
+    placeholder=("예: 대지 경사를 따라 매스가 3단계로 쪼개지며 중정이 생기는 과정. 1층은 공용, 2~3층은 주거."
+                 if not is_drawing else
+                 "예: 1층 평면. 공용(로비·카페)과 주거 출입을 색으로 구분하고, 중정과 이어지는 동선이 잘 보이게."),
 )
 
 MAX_PROJECT = 6
@@ -797,7 +832,7 @@ with c1:
     ) or ""
 
     # 구절별 추천: (구절, 직접 대체 그래픽 키워드, 비슷한 느낌의 건축 언어)
-    types = list(ss.get("diagram_types") or [])
+    types = current_types()
     rows: list[tuple[str, list[str], list[str]]] = []
     engine = "기본 사전"
     if ss.mood.strip():
@@ -822,7 +857,7 @@ with c1:
 
     st.caption(f"추천: {engine} — 단어를 클릭하면 선택돼요")
     if not rows:
-        _pills("자주 쓰는 키워드", DEFAULT_KEYWORDS, "default")
+        _pills("자주 쓰는 키워드", DEFAULTS_BY_WORK[work_type], f"default_{work_type}")
     for phrase, direct, similar in rows:
         st.markdown(f"**“{phrase}”**")
         if direct:
@@ -860,8 +895,8 @@ has_input = bool(goal_text() or ref_bytes or ss.mood or ss.picked or project_byt
 
 # ---------------------------------------------------------------- ③ 스케치 + 생성
 with c2:
-    st.subheader("③ 내 스케치")
-    t_clip, t_dir, t_file = st.tabs(["📋 클립보드", "📁 폴더", "📄 파일"])
+    st.subheader("③ 내 스케치" if not is_drawing else "③ 리터칭할 도면")
+    t_clip, t_dir, t_file, t_dxf = st.tabs(["📋 클립보드", "📁 폴더", "📄 파일", "📐 DXF 도면"])
     with t_clip:
         st.caption("**포토샵** Ctrl+Shift+C · **라이노** `ViewCaptureToClipboard` · "
                    "**스케치업/PPT/종이 사진** Win+Shift+S로 캡처 → 아래 버튼")
@@ -887,14 +922,49 @@ with c2:
         if f and ss.get("upload_id") != f.file_id:
             ss.upload_id = f.file_id
             ss.sketch_bytes, ss.sketch_src = f.getvalue(), f.name
+    with t_dxf:
+        st.caption("AutoCAD에서 **DXF로 저장**한 도면을 레이어별로 정리해 바탕 도면으로 써요. "
+                   "벽은 굵게·검정 채움(포셰), 창호는 가늘게, 가구는 회색, 치수·도곽은 숨기기 — AI 없이 정확하게 정리돼요.")
+        dx = st.file_uploader("DXF 도면", type=["dxf"], key="sketch_dxf")
+        if dx:
+            if ss.get("dxf_id") != dx.file_id:
+                ss.dxf_id = dx.file_id
+                try:
+                    ss.dxf_layers = cad_import.dxf_layers(dx.getvalue())
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"DXF를 읽지 못했어요: {str(e)[:150]}")
+                    ss.dxf_layers = []
+            if ss.get("dxf_layers"):
+                import pandas as pd
+
+                st.caption("레이어 이름으로 역할을 추천했어요. 필요하면 '역할' 칸을 눌러 바꾸세요.")
+                edited = st.data_editor(
+                    pd.DataFrame([{"레이어": n, "객체 수": c, "역할": r} for n, c, r in ss.dxf_layers]),
+                    column_config={
+                        "레이어": st.column_config.TextColumn(disabled=True),
+                        "객체 수": st.column_config.NumberColumn(disabled=True),
+                        "역할": st.column_config.SelectboxColumn(options=cad_import.ROLES, required=True),
+                    },
+                    hide_index=True, use_container_width=True, key=f"dxf_editor_{dx.file_id}",
+                )
+                fill = st.checkbox("벽 레이어의 닫힌 선을 검정으로 채우기 (포셰)", value=True)
+                if st.button("📐 정리된 도면을 사용", type="primary"):
+                    with st.spinner("도면 정리 중..."):
+                        try:
+                            png = cad_import.dxf_render_styled(dx.getvalue(), dict(zip(edited["레이어"], edited["역할"])),
+                                                               fill)
+                            ss.sketch_bytes, ss.sketch_src = png, f"{dx.name} (레이어 정리)"
+                        except Exception as e:  # noqa: BLE001
+                            st.error(f"도면을 그리지 못했어요: {str(e)[:150]}")
 
     if ss.sketch_bytes:
-        st.image(ss.sketch_bytes, caption=f"현재 스케치 · {ss.sketch_src}", use_container_width=True)
+        st.image(ss.sketch_bytes, caption=f"{'현재 스케치' if not is_drawing else '리터칭할 도면'} · {ss.sketch_src}",
+                 use_container_width=True)
 
     extra = st.text_input("추가 지시 (선택)", placeholder="예: 동선은 주황 화살표, 라벨은 영어로")
     ready = bool(ss.sketch_bytes and has_input)
     if not ready:
-        st.caption("스케치 + (① 다이어그램 설명이나 ② 분위기/레퍼런스 중 하나 이상)이 필요해요.")
+        st.caption(f"{'스케치' if not is_drawing else '도면'} + (① 설명이나 ② 분위기/레퍼런스 중 하나 이상)이 필요해요.")
 
     if not use_api:
         st.markdown(f"##### {'Codex로 자동 생성' if use_codex else 'ChatGPT로 생성하기'} · {quality_label} · 생각: {think}")
@@ -1010,7 +1080,7 @@ with c2:
     elif st.button(f"✨ 다이어그램 생성 · {quality_label}", type="primary", disabled=not (ready and api_key)):
         with st.spinner("다이어그램 생성 중... (30초~1분)"):
             png = render(ss.sketch_bytes, ref_bytes, "Redraw IMAGE 1 as a finished diagram. " + extra)
-        add_version(png, "초기 생성")
+        register_result(png, "초기 생성")
         ss.chat.append(("assistant", f"v{len(ss.versions)} 생성 완료. 수정할 점을 채팅으로 알려주세요."))
 
 # ---------------------------------------------------------------- ④ 결과 (버전 목록: 새 버전은 아래에 추가)
@@ -1034,7 +1104,12 @@ if ss.versions:
             left, right = st.columns([3, 2])
             with left:
                 st.image(v["png"], caption=f"v{i + 1} · {v['note']}", use_container_width=True)
-                b1, b2 = st.columns(2)
+                b1, b2, b3 = st.columns(3)
+                if b3.button("📐 원본 선 덮기", key=f"lock_{i}", disabled=not ss.sketch_bytes,
+                             help="이 이미지 위에 원본 도면/스케치의 선을 겹친 새 버전을 아래에 추가해요"):
+                    locked, how = drawing_tools.lock_lines(v["png"], ss.sketch_bytes, lock_opacity, lock_threshold)
+                    add_version(locked, f"v{i + 1} + 원본 선 고정 ({how})", v.get("prompt", ""))
+                    st.rerun()
                 if b1.button("📋 이미지 복사", key=f"copy_{i}", help="포토샵·PPT·ChatGPT에 Ctrl+V"):
                     try:
                         bridge.copy_to_clipboard(v["png"])
@@ -1106,5 +1181,5 @@ if ss.versions:
                     png = render(v["png"], ref_bytes,
                                  f"Keep everything from IMAGE 1 unchanged except this revision: {req}")
                 ss.chat.append(("assistant", f"v{len(ss.versions) + 1} 완료 (v{last + 1} 기반)."))
-                add_version(png, req)
+                register_result(png, req)
                 st.rerun()

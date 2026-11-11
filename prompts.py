@@ -10,6 +10,14 @@ TYPE_EN = {
     "분해 액소": "exploded axonometric", "환경 (빛·바람)": "environmental (light & wind)",
     "단면 다이어그램": "sectional diagram", "배치·맥락": "site & context", "구조·재료": "structure & materials",
     "컨셉 다이어그램": "concept diagram", "단계별 시퀀스": "step-by-step sequence",
+    # 평면 리터칭
+    "실별 색 구분": "room/zone color coding", "가구·인테리어": "furniture & interior layout",
+    "조경·외부공간": "landscape & outdoor spaces", "바닥 재질": "floor materials", "그림자·깊이감": "shadows & depth",
+    "흑백 포셰 강조": "black-and-white poché emphasis", "동선 표시": "circulation paths",
+    # 단면 리터칭
+    "절단면 포셰 강조": "solid poché of cut elements", "지반·지형": "ground & terrain", "빛·환경 흐름": "light & environmental flows",
+    "사람·스케일": "people & scale", "단면 투시(깊이감)": "section perspective depth", "재료·구조": "materials & structure",
+    "배경·하늘": "background & sky",
 }
 QUALITY_EN = {
     "초안 (빠름)": "Quick rough draft quality (minimal detail).",
@@ -34,6 +42,70 @@ THINK_KO = {
     "깊게 생각": "깊게 생각해줘: 생성 전에 스케치의 형태·위계와 레퍼런스의 그래픽 규칙을 자세히 분석하고, "
                  "생성 후 스케치와 비교해 다시 점검해줘.",
 }
+
+
+# ---------------------------------------------------------------- 작업 종류 · 형태 변형 단계
+WORK_TYPES = ["다이어그램", "평면 리터칭", "단면 리터칭"]
+WORK_EN = {
+    "다이어그램": "ARCHITECTURAL DIAGRAM",
+    "평면 리터칭": "FLOOR PLAN (a retouched rendering of my own drawing)",
+    "단면 리터칭": "SECTION drawing (a retouched rendering of my own drawing)",
+}
+WORK_KO = {"다이어그램": "발표용 건축 다이어그램", "평면 리터칭": "발표용 평면도 (내 도면 리터칭)",
+           "단면 리터칭": "발표용 단면도 (내 도면 리터칭)"}
+INPUT_EN = {
+    "다이어그램": "CONTENT to draw (rough hand sketch or 3D model screenshot)",
+    "평면 리터칭": "MY FLOOR PLAN DRAWING to retouch",
+    "단면 리터칭": "MY SECTION DRAWING to retouch",
+}
+INPUT_KO = {"다이어그램": "그릴 내용 (손스케치 / 3D 캡처)", "평면 리터칭": "리터칭할 내 평면도",
+            "단면 리터칭": "리터칭할 내 단면도"}
+DRAWING_RULES_EN = {
+    "평면 리터칭": ("Treat it as an orthographic FLOOR PLAN: keep it strictly top-down (no perspective, no 3D), keep the "
+                 "exact walls and wall thickness, doors and swings, windows, stairs, columns/grid, room names and areas. "
+                 "Retouch only by rendering: poché of cut walls, room fills/zoning colors, floor materials, furniture and "
+                 "landscape, soft shadows — as the style asks."),
+    "단면 리터칭": ("Treat it as an orthographic SECTION: keep the view exactly (no perspective unless the drawing is "
+                 "already a section perspective), keep floor levels, slab and wall thickness, the cut, openings, roof "
+                 "profile, ground line and level marks. Retouch only by rendering: solid poché of cut elements, ground "
+                 "hatch, lighter elements beyond, sky/background, people for scale, light — as the style asks."),
+}
+DRAWING_RULES_KO = {
+    "평면 리터칭": ("정사영 평면도로 취급: 위에서 본 그대로(투시·3D 금지), 벽과 벽 두께, 문과 문 열림, 창, 계단, 기둥·그리드, "
+                 "실명·면적을 정확히 유지. 리터칭은 표현만: 절단 벽 포셰, 실별 색, 바닥 재질, 가구·조경, 부드러운 그림자."),
+    "단면 리터칭": ("정사영 단면도로 취급: 보는 방향 그대로(원래 단면투시가 아니면 투시 금지), 층 레벨, 슬래브·벽 두께, 절단면, "
+                 "개구부, 지붕선, 지반선, 레벨 표기를 유지. 리터칭은 표현만: 절단 부재 포셰, 지반 해치, 원경 요소는 옅게, "
+                 "하늘·배경, 스케일용 사람, 빛."),
+}
+FORM_LABELS = ["① 완전 고정", "② 선 정리", "③ 비율 다듬기", "④ 구성 정리", "⑤ 재해석"]
+FORM_HELP = [
+    "선·벽·매스·위치·비율·시점·글자를 그대로 두고 색·채움·질감·그림자·첨경만 입혀요.",
+    "모든 요소와 위치·비율은 그대로, 삐뚤어진 선만 곧게 펴고 끊긴 선을 잇고 선 굵기를 통일해요.",
+    "요소와 배치는 그대로, 어색하게 틀어진 비율·정렬만 살짝 바로잡아요. 요소 추가·삭제 없음.",
+    "설계 의도와 요소 관계는 유지, 작은 디테일을 단순화하거나 합치고 간격·구도를 정리해요.",
+    "개념·전체 배치·부분 개수·핵심 관계만 유지하고 형태는 더 명확하게 자유롭게 다시 그려요.",
+]
+FORM_EN = [
+    "LOCK the geometry: every line, wall, opening, mass, position, proportion, viewpoint and text stays exactly where it "
+    "is. Only add color, fills, texture, shading and entourage on top. Do not move, redraw, add or remove any element.",
+    "Keep all elements, positions, proportions and the viewpoint exactly. You may only clean up the linework "
+    "(straighten wobbly lines, close small gaps, unify line weights). Do not add or remove elements.",
+    "Keep every element and the layout. You may slightly correct proportions and alignments that look unintentionally "
+    "off, but do not add or remove elements or change the design.",
+    "Keep the design intent, the elements and their relationships. You may simplify small details, merge tiny parts "
+    "and adjust spacing/composition for clarity. Do not invent new design elements.",
+    "Use the input as the concept: keep the overall layout, the number of parts and the key relationships, but you may "
+    "freely redraw forms for a stronger, cleaner result. Do not change what it communicates.",
+]
+FORM_KO = [
+    "형태 완전 고정: 모든 선·벽·개구부·매스·위치·비율·시점·글자를 그대로 두고, 색·채움·질감·그림자·첨경만 덧입힐 것. "
+    "어떤 요소도 옮기거나 다시 그리거나 추가·삭제하지 말 것.",
+    "모든 요소·위치·비율·시점은 그대로. 선만 정리(삐뚤어진 선 펴기, 작은 끊김 잇기, 선 굵기 통일). 요소 추가·삭제 금지.",
+    "모든 요소와 배치는 유지. 의도치 않게 틀어진 비율·정렬만 살짝 바로잡을 것. 요소 추가·삭제나 설계 변경 금지.",
+    "설계 의도·요소·관계는 유지. 작은 디테일 단순화·병합, 간격·구도 정리는 허용. 새로운 설계 요소를 지어내지 말 것.",
+    "입력을 개념으로 사용: 전체 배치·부분 개수·핵심 관계만 유지하고 형태는 더 명확하게 자유롭게 다시 그려도 됨. "
+    "전달하는 내용은 바꾸지 말 것.",
+]
 
 
 def project_names(n: int) -> str:
@@ -104,6 +176,8 @@ class Spec:
     project_text: str = ""  # 내 설계의 프로그램·설계 논리 글
     n_project: int = 0  # 첨부하는 내 설계 도면/다이어그램 장수
     facts_strict: bool = True  # 설계 자료에 없는 내용 추가 금지
+    work_type: str = "다이어그램"  # 다이어그램 / 평면 리터칭 / 단면 리터칭
+    form_level: int = 1  # 0~4 (FORM_LABELS)
 
 
 STRENGTH_EN = {
@@ -160,10 +234,10 @@ def style_header_en(s: Spec) -> str:
 
 
 def structure_en(s: Spec) -> str:
-    if s.strict:
-        return ("STRICTLY keep the sketch's massing, proportions, positions, viewpoint, arrows and text content. "
-                "Do not add or remove building elements.")
-    return "Keep the sketch's layout and intent, but you may straighten lines and tidy proportions."
+    text = f"Form change level {FORM_LABELS[s.form_level][2:]} ({s.form_level + 1}/5): {FORM_EN[s.form_level]}"
+    if s.work_type in DRAWING_RULES_EN:
+        text += "\n" + DRAWING_RULES_EN[s.work_type]
+    return text
 
 
 def style_en(s: Spec) -> str:
@@ -184,10 +258,10 @@ def chatgpt_en(s: Spec, n_refs: int, board: bool) -> str:
                   "the RIGHT panels labeled 'REF n = STYLE ONLY' are style references. "
                   "Output ONLY the redrawn sketch as a new image (not the board, no labels from the board).")
     elif n_refs:
-        images = ("- 1_sketch.png = CONTENT to draw (rough hand sketch or 3D model screenshot)\n"
+        images = (f"- 1_sketch.png = {INPUT_EN[s.work_type]}\n"
                   f"- {ref_names(n_refs)} = STYLE references only — never copy their buildings or content")
     else:
-        images = "- 1_sketch.png = CONTENT to draw (rough hand sketch or 3D model screenshot). No reference images."
+        images = f"- 1_sketch.png = {INPUT_EN[s.work_type]}. No reference images."
     if s.n_project and board:
         images += " Panels labeled 'PROJECT n = FACTS' are my own design drawings: content facts only."
     elif s.n_project:
@@ -201,7 +275,7 @@ def chatgpt_en(s: Spec, n_refs: int, board: bool) -> str:
              "(projection, line-weight hierarchy, palette with hex, texture, annotation, entourage).\n"
              "2) Then generate the diagram image in that style."
     )
-    return f"""Create a presentation-ready ARCHITECTURAL DIAGRAM from the attached image(s).
+    return f"""Create a presentation-ready {WORK_EN[s.work_type]} from the attached image(s).
 If the images are not attached yet, reply only "이미지를 첨부해 주세요" and wait for my next message with the images.
 {ref_guard_en(n_refs, board)}
 
@@ -233,10 +307,10 @@ def chatgpt_ko(s: Spec, n_refs: int, board: bool) -> str:
         images = ("첨부한 보드 이미지 한 장: 왼쪽 'SKETCH = CONTENT' 칸이 그릴 내용, 오른쪽 'REF n = STYLE ONLY' 칸들은 "
                   "스타일 레퍼런스. 결과는 보드가 아니라 스케치를 다시 그린 이미지 한 장만.")
     elif n_refs:
-        images = (f"- 1_sketch.png = 그릴 내용 (손스케치 / 3D 캡처)\n"
+        images = (f"- 1_sketch.png = {INPUT_KO[s.work_type]}\n"
                   f"- {ref_names(n_refs)} = 스타일 레퍼런스 (형태는 절대 복사하지 말 것)")
     else:
-        images = "- 1_sketch.png = 그릴 내용 (손스케치 / 3D 캡처). 레퍼런스 이미지는 없음."
+        images = f"- 1_sketch.png = {INPUT_KO[s.work_type]}. 레퍼런스 이미지는 없음."
     if s.n_project and board:
         images += " 'PROJECT n = FACTS' 칸은 내 설계 도면: 내용의 기준으로만 사용."
     elif s.n_project:
@@ -251,20 +325,20 @@ def chatgpt_ko(s: Spec, n_refs: int, board: bool) -> str:
         f"- 원하는 느낌: {s.mood}" if s.mood else "",
         f"- 스타일 가이드:\n{s.style_guide}" if s.style_guide else "",
     ] if x) or "- 레퍼런스 이미지의 그래픽 스타일을 따를 것"
-    rule = ("스케치의 매스, 비율, 배치, 시점, 화살표, 글자 내용을 그대로 유지. 건물 요소를 추가하거나 빼지 말 것."
-            if s.strict else "스케치의 배치와 의도는 유지하되 선을 정돈하고 비율을 다듬어도 됨.")
+    rule = f"형태 변형 단계 {FORM_LABELS[s.form_level]}: {FORM_KO[s.form_level]}" + (
+        f"\n{DRAWING_RULES_KO[s.work_type]}" if s.work_type in DRAWING_RULES_KO else "")
     ratio = f" 비율은 {s.aspect}." if s.aspect != "자동" else ""
     steps = ("1) 바로 다이어그램 이미지를 생성해줘." if s.think == "빠르게" or not (n_refs or board) else
              "1) 레퍼런스의 그래픽 스타일(투상법, 선 위계, 색상 hex, 질감, 주석, 첨경)을 5줄 이내로 먼저 정리해줘.\n"
              "2) 그 스타일로 다이어그램 이미지를 생성해줘.")
-    return f"""첨부 이미지로 발표용 건축 다이어그램을 만들어줘.
+    return f"""첨부 이미지로 {WORK_KO[s.work_type]}을(를) 만들어줘.
 아직 이미지가 첨부되지 않았다면 "이미지를 첨부해 주세요"라고만 답하고 다음 메시지를 기다려줘.
 {ref_guard_ko(n_refs, board)}
 
 [첨부]
 {images}
 
-[1순위 · 어떤 다이어그램인지 — 스타일보다 우선]
+[1순위 · {"어떤 다이어그램인지" if s.work_type == "다이어그램" else "어떤 리터칭인지"} — 스타일보다 우선]
 {goal}
 {facts_ko(s)}
 
@@ -289,8 +363,8 @@ def image_api(s: Spec, n_refs: int, task: str) -> str:
     if s.n_project:
         refs += (f"\nIMAGE {rng(n_refs + 2, n_refs + 1 + s.n_project)} = MY DESIGN DRAWINGS of this project: "
                  "content facts only, not style.")
-    return f"""You are making an architectural diagram.
-IMAGE 1 = the content to draw (rough sketch, 3D model screenshot, or a previous version).
+    return f"""You are making a {WORK_EN[s.work_type]}.
+IMAGE 1 = {INPUT_EN[s.work_type]} (or a previous version of the result).
 {refs}
 
 PRIORITY 1 — what this diagram must communicate (overrides style):
@@ -324,6 +398,7 @@ Review the DRAFT prompt below (it will be pasted into ChatGPT together with the 
 2. Read the references: extract the concrete graphic language (accent colors as hex, line weights, fills, label typography/layout, arrow types, tree/people style, background, and elements they do NOT use such as titles or legends) and add precise rules.
 3. Fix conflicts between the goal, keywords, mood, style strength and references; remove vague or redundant wording.
 4. If project documents are given (my design drawings and/or program text): extract the FACTS (program and space names, numbers, areas, floor counts, labels, key design logic), state the ones the diagram needs in the prompt, and remove or correct anything that contradicts them or is not supported by them.
+5. If the work type is a floor plan or section retouch: make sure the prompt locks the drawing geometry (walls, openings, levels, text) at the chosen form change level and only lists rendering operations.
 Keep the draft's language, its attachment description, its missing-image guard lines and the "reply in Korean" line. Keep it under ~2,500 characters. Do not invent design content.
 
 Answer in Korean: first a short list of the problems you found (most important first), then the improved prompt inside ONE code block (```) so I can copy it.
@@ -352,6 +427,7 @@ Review the DRAFT prompt below. It will be sent to ChatGPT/Codex (image generatio
 2. Read the references: extract the concrete graphic language (accent colors as hex, line weights, fills, label typography/layout, arrow types, tree/people style, background, and elements they do NOT use such as titles or legends) and add precise rules.
 3. Fix conflicts between the goal, keywords, mood, style strength and references; remove vague or redundant wording.
 4. If project documents are given (my design drawings and/or program text): extract the FACTS (program and space names, numbers, areas, floor counts, labels, key design logic), state the ones the diagram needs in the prompt, and remove or correct anything that contradicts them or is not supported by them.
+5. If the work type is a floor plan or section retouch: make sure the prompt locks the drawing geometry (walls, openings, levels, text) at the chosen form change level and only lists rendering operations.
 Keep the draft's language, its attachment description (file names), and the "reply in Korean" line. Keep it under ~2,500 characters. Do not invent design content. Do not edit or create any files.
 
 OUTPUT FORMAT (exactly):
@@ -376,7 +452,9 @@ QA_CRITERIA = """Check the GENERATED result against:
 3. Style: does it follow the references' graphic language (accent colors, line weights, fills, labels, arrows, entourage) and avoid elements the references do not use (titles, legends, extra strips) when the style strength asks for that?
 4. Quality: garbled or misspelled text, broken geometry, artifacts, missing or duplicated parts, inconsistent color meaning.
 5. Facts: if project documents are given, every program/space name, number, floor count, label and design move in the result must be supported by them or the sketch. Flag anything invented or contradicting them.
-Only flag problems that clearly matter for a presentation diagram. If it is good enough, PASS."""
+6. Drawing accuracy (when the work type is a floor plan or section retouch): compared with the original drawing (SKETCH), walls and their thickness, doors, windows, stairs, columns/grid, levels, room names, areas and dimensions must be unchanged and the view must stay orthographic. Flag any moved, missing, added or distorted element.
+Respect the form change level in the user settings: at levels 1-2 any geometric change is a problem; at levels 4-5 simplification is allowed but the concept must remain.
+Only flag problems that clearly matter for a presentation drawing. If it is good enough, PASS."""
 
 
 def qa_request_cli(result: str, sketch: str, refs: list[str], context_ko: str, prompt_used: str,

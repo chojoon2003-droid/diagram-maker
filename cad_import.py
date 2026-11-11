@@ -139,3 +139,86 @@ def _clean_lines(items: list[str], limit: int = 300) -> str:
         if len(out) >= limit:
             break
     return "\n".join(out)
+
+
+# ------------------------------------------------------------------ DXF 레이어 정리 (평면·단면 리터칭용 바탕 도면)
+ROLES = ["벽·구조 (굵게 + 채움)", "창호·문 (가늘게)", "가구·설비 (회색)", "기본", "숨기기"]
+_ROLE_STYLE = {  # (RGB, 선 굵기 1/100 mm)
+    ROLES[0]: ((0, 0, 0), 70),
+    ROLES[1]: ((0, 0, 0), 18),
+    ROLES[2]: ((140, 140, 140), 13),
+    ROLES[3]: ((40, 40, 40), 25),
+}
+_GUESS = [  # (레이어 이름에 들어간 단어, 역할)
+    (("wall", "벽", "col", "기둥", "구조", "str", "slab", "슬래브", "a-wall", "poche"), ROLES[0]),
+    (("win", "창", "door", "문", "glaz", "opening", "개구"), ROLES[1]),
+    (("furn", "가구", "equip", "설비", "plumb", "위생", "fix", "interior"), ROLES[2]),
+    (("dim", "치수", "defpoint", "viewport", "vport", "frame", "도곽", "title", "anno-dim", "center", "중심"), ROLES[4]),
+]
+
+
+def dxf_layers(data: bytes) -> list[tuple[str, int, str]]:
+    """[(레이어 이름, 객체 수, 추천 역할)] — 객체가 있는 레이어만"""
+    from collections import Counter
+
+    from ezdxf import recover
+
+    doc, _ = recover.read(io.BytesIO(data))
+    counts = Counter(e.dxf.layer for e in doc.modelspace())
+    out = []
+    for name, n in counts.most_common():
+        low = name.lower()
+        role = next((r for words, r in _GUESS if any(w in low for w in words)), ROLES[3])
+        out.append((name, n, role))
+    return out
+
+
+def dxf_render_styled(data: bytes, roles: dict[str, str], fill_walls: bool = True, max_px: int = 3000) -> bytes:
+    """레이어 역할대로 선 굵기·색을 정리하고(숨기기 레이어는 끔) 흰 배경 PNG로 그린다.
+    fill_walls=True면 벽 레이어의 닫힌 폴리라인을 검정으로 채운다(포셰)."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from ezdxf import recover
+    from ezdxf.addons.drawing import Frontend, RenderContext
+    from ezdxf.addons.drawing.config import BackgroundPolicy, ColorPolicy, Configuration, LineweightPolicy
+    from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
+
+    doc, _ = recover.read(io.BytesIO(data))
+    msp = doc.modelspace()
+    _use_korean_font(doc)
+    for layer in doc.layers:
+        role = roles.get(layer.dxf.name, ROLES[3])
+        if role == ROLES[4]:
+            layer.off()
+            continue
+        layer.on()
+        rgb, lw = _ROLE_STYLE[role]
+        layer.rgb = rgb
+        layer.dxf.lineweight = lw
+    for e in msp:  # 객체마다 따로 지정된 색·굵기를 지우고 레이어 설정을 따르게
+        try:
+            e.dxf.color = 256
+            e.dxf.lineweight = -1
+            if e.dxf.hasattr("true_color"):
+                e.dxf.discard("true_color")
+        except Exception:  # noqa: BLE001
+            continue
+    if fill_walls:
+        wall_layers = {n for n, r in roles.items() if r == ROLES[0]}
+        for pl in list(msp.query("LWPOLYLINE")):
+            if pl.dxf.layer in wall_layers and pl.closed:
+                h = msp.add_hatch(color=256, dxfattribs={"layer": pl.dxf.layer})
+                h.set_solid_fill(color=256, style=1)  # 색은 레이어(검정)를 따름
+                h.paths.add_polyline_path([(x, y, b) for x, y, *_, b in pl.get_points("xyseb")], is_closed=True)
+
+    fig = plt.figure(figsize=(12, 12))
+    ax = fig.add_axes([0, 0, 1, 1])
+    cfg = Configuration(background_policy=BackgroundPolicy.WHITE, color_policy=ColorPolicy.COLOR,
+                        lineweight_policy=LineweightPolicy.ABSOLUTE)
+    Frontend(RenderContext(doc), MatplotlibBackend(ax), config=cfg).draw_layout(msp, finalize=True)
+    buf = io.BytesIO()
+    fig.savefig(buf, dpi=max_px // 12, facecolor="white")
+    plt.close(fig)
+    return buf.getvalue()

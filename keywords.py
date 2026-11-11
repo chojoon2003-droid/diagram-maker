@@ -113,6 +113,31 @@ ARCH_LANG = [
      ["전이 공간 · transitional space", "켜진 경계 · layered boundary", "회랑 · arcade", "반외부 공간 · semi-outdoor space"]),
 ]
 
+# 평면·단면 리터칭용 표현 (문장에 해당 단어가 있으면 추천)
+GROUPS += [
+    (["포셰", "벽 채움", "검정 벽", "흑백", "poche"],
+     ["절단 벽 검정 포셰 · solid black poché walls", "회색 포셰 · grey poché walls", "선 굵기 위계 · line weight hierarchy"]),
+    (["실별", "조닝", "색 구분", "공간 구분", "zoning"],
+     ["실별 파스텔 채색 · pastel room fills", "용도별 색 구분 · color-coded program zones", "공용·사적 위계 색 · public-private color gradient"]),
+    (["가구", "인테리어", "furniture"],
+     ["선화 가구 · line-art furniture", "회색 톤 가구 · grey-toned furniture", "최소 가구 배치 · minimal furniture layout"]),
+    (["바닥", "재질", "마감", "floor"],
+     ["목재 바닥 패턴 · timber floor pattern", "타일 그리드 · tile grid", "콘크리트 질감 · concrete texture"]),
+    (["그림자", "깊이", "입체감", "shadow"],
+     ["부드러운 그림자 · soft drop shadows", "45° 그림자 · 45-degree cast shadows", "앰비언트 오클루전 · ambient occlusion"]),
+    (["지반", "땅", "지형", "흙", "ground"],
+     ["지반 해치 · ground hatch", "흙 질감 단면 · soil texture in section", "지반선 강조 · bold ground line"]),
+    (["하늘", "배경", "sky"],
+     ["옅은 하늘 그라데이션 · soft sky gradient", "흰 배경 · plain white background", "원경 건물 회색 · grey background buildings"]),
+]
+
+PLAN_DEFAULT = ["절단 벽 검정 포셰 · solid black poché walls", "실별 파스텔 채색 · pastel room fills",
+                "선화 가구 · line-art furniture", "목재 바닥 패턴 · timber floor pattern",
+                "부드러운 그림자 · soft drop shadows", "선화 나무 · line-art trees", "용도별 색 구분 · color-coded program zones"]
+SECTION_DEFAULT = ["절단 벽 검정 포셰 · solid black poché walls", "지반 해치 · ground hatch",
+                   "옅은 하늘 그라데이션 · soft sky gradient", "실루엣 인물 · silhouette people",
+                   "채광 광선 · daylight rays", "원경 건물 회색 · grey background buildings", "단면 투시 · section perspective"]
+
 DEFAULT_KEYWORDS = ["액소노메트릭 · axonometric view", "미니멀 플랫 · minimal flat vector", "손그림 선 · hand-drawn line",
                     "수채화 워시 · watercolor wash", "용도별 색 구분 · color-coded program zones",
                     "동선 화살표 · circulation arrows", "톤다운 색감 · muted tones", "분해 액소 · exploded axonometric"]
@@ -130,6 +155,15 @@ TYPE_FALLBACK = {
     "컨셉 다이어그램": ["개념적 추상화 · conceptual abstraction", "핵심 제스처 · single bold gesture", "은유적 형태 · metaphorical form"],
     "단계별 시퀀스": ["단계적 변화 · step-by-step sequence", "번호 매긴 과정 · numbered process", "전후 비교 · before → after"],
 }
+TYPE_FALLBACK.update({
+    "실별 색 구분": ["공용·사적 위계 · public-private gradient", "켜 공간 · layered thresholds"],
+    "그림자·깊이감": ["빛과 그림자 대비 · chiaroscuro", "깊은 처마 그림자 · deep eave shadow"],
+    "절단면 포셰 강조": ["단면의 깊이 · sectional depth", "절단면 검정 포셰 · solid black poché"],
+    "빛·환경 흐름": ["빛의 우물 · light well", "맞통풍 · cross ventilation"],
+    "단면 투시(깊이감)": ["단면 투시 · section perspective", "보이드 · interlocking voids"],
+})
+DEFAULTS_BY_WORK = {}  # 아래에서 채움
+
 GENERAL_ARCH = ["절제된 여백 · restrained void", "빛과 그림자 대비 · chiaroscuro", "켜 공간 · layered thresholds",
                 "열린 평면 · open plan", "반복되는 리듬 · rhythmic repetition", "재료의 솔직함 · honest materiality"]
 
@@ -195,3 +229,6 @@ def suggest_by_phrase(text: str, diagram_types: list[str] | None = None):
 
 def ko(label: str) -> str:
     return label.split(" · ")[0]
+
+
+DEFAULTS_BY_WORK.update({"다이어그램": DEFAULT_KEYWORDS, "평면 리터칭": PLAN_DEFAULT, "단면 리터칭": SECTION_DEFAULT})
