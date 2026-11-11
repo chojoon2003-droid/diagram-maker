@@ -146,8 +146,9 @@ with st.sidebar:
             st.warning(codex_bridge.SETUP_HELP)
         codex_model = st.text_input("Codex 모델", "gpt-6-astra",
                                     help="Codex에서 쓸 모델 이름. 예: gpt-6-astra. 이미지는 Codex 내장 이미지 생성으로 만들어요.")
-        think = st.select_slider("생각 수준", options=["빠르게", "자동", "깊게 생각"], value="자동",
-                                 help="Codex 추론 강도 (low / medium / high)")
+        think = st.select_slider("생각 수준", options=["빠르게", "자동", "깊게 생각"], value="빠르게",
+                                 help="Codex 추론 강도 (low / medium / high). 검수는 Claude가 따로 하니 "
+                                      "'빠르게'면 충분해요 — 높일수록 OpenAI 사용량이 늘어요.")
         prompt_lang = st.radio("프롬프트 언어", ["English (추천)", "한국어"], horizontal=True)
         st.markdown("**🤖 원클릭 전체 자동**")
         cc_ver = claude_code_status()
@@ -178,7 +179,7 @@ with st.sidebar:
         open_target = st.radio("ChatGPT 여는 곳", ["Chrome", "ChatGPT 데스크탑 앱", "기본 브라우저"],
                                help="Chrome/브라우저: 입력창에 프롬프트를 미리 채워서 열어요.\n\n"
                                     "데스크탑 앱: 앱을 열고, 프롬프트는 버튼으로 복사해 붙여넣어요.")
-        think = st.select_slider("ChatGPT 생각 수준", options=["빠르게", "자동", "깊게 생각"], value="자동",
+        think = st.select_slider("ChatGPT 생각 수준", options=["빠르게", "자동", "깊게 생각"], value="빠르게",
                                  help="프롬프트에 생각 깊이 지시를 넣어요. 확실하게 하려면 ChatGPT 화면 상단 "
                                       "모델 메뉴에서도 같은 수준(예: Thinking)을 골라주세요.")
         attach_mode = st.radio("이미지 첨부 방식", ["파일 여러 장", "한 장으로 합치기"],
@@ -206,6 +207,11 @@ with st.sidebar:
         lock_opacity = st.slider("선 진하기", 0.3, 1.0, 1.0, 0.05, help="1.0이면 원본 선을 그대로, 낮추면 AI 표현과 섞여요")
         lock_threshold = st.slider("선 인식 감도", 80, 220, 150, 10,
                                    help="높일수록 옅은 선(해치·가는 선)까지 원본에서 가져와요. 회색 바탕이 덮이면 낮추세요.")
+    detail = st.select_slider(
+        "첨경·디테일 수준", options=prompts.DETAIL_LEVELS, value=prompts.DETAIL_LEVELS[1],
+        help="단순: 실루엣·단순 형태\n\n사실적 (과한 디테일 없이): 비례·자세는 사실적, 옷 재질·얼굴·잎 하나하나 같은 세부 묘사 없음\n\n"
+             "풍부: 질감·디테일 허용 (OpenAI 처리량이 늘 수 있어요)",
+    )
     style_strength = st.select_slider(
         "레퍼런스 스타일 강도", options=["구조 우선", "균형", "스타일 우선"], value="균형",
         help="구조 우선: 레퍼런스는 느슨한 참고\n\n균형: 색·선·라벨·화살표를 가깝게 따름\n\n"
@@ -357,7 +363,7 @@ def spec(extra: str = "") -> prompts.Spec:
         keywords=list(ss.picked), style_guide=ss.style_guide, strict=form_level <= 1,
         quality=quality_label, aspect=aspect, think=think, extra=extra, style_strength=style_strength,
         project_text=ss.get("project_text", ""), n_project=len(project_bytes),
-        facts_strict=ss.get("facts_strict", True), work_type=work_type, form_level=form_level,
+        facts_strict=ss.get("facts_strict", True), work_type=work_type, form_level=form_level, detail=detail,
     )
 
 
@@ -413,6 +419,7 @@ def review_context() -> str:
         f"- 선택 키워드: {', '.join(ss.picked) or '없음'}",
         f"- 형태 변형 단계: {form_label} ({form_level + 1}/5) — {prompts.FORM_HELP[form_level]}",
         f"- 레퍼런스 스타일 강도: {style_strength} / 원본 선 고정 합성: {'켜짐' if line_lock else '꺼짐'}",
+        f"- 첨경·디테일 수준: {detail} — {prompts.DETAIL_KO[detail]}",
         f"- 이미지 첨부 방식: {attach_mode} / 화질: {quality_label} / 비율: {aspect} / 생각 수준: {think}",
         f"- 내 설계 자료: 도면 {len(project_bytes)}장, 설계 글 {'있음' if ss.get('project_text', '').strip() else '없음'}"
         f" / 없는 내용 추가 금지: {'예' if ss.get('facts_strict', True) else '아니오'}",
@@ -551,7 +558,7 @@ def run_pipeline(ref_bytes: list[bytes], extra: str, draft: str) -> None:
                                                   draft, review_context(), ss.sketch_bytes, ref_bytes, project_bytes)
                     ss.review = {"draft": draft, **result}
                 ss.reviewed_text = ss.review["improved_prompt"]
-                prompt = ss.reviewed_text
+                prompt = ensure_rules(ss.reviewed_text)
                 st.write("✅ ② Claude 검토 완료 — 검토된 프롬프트로 진행해요")
             except RuntimeError as e:
                 st.write(f"⚠️ ② Claude 검토 실패 → 초안 그대로 진행: {str(e).splitlines()[0]}")
@@ -574,15 +581,24 @@ def codex_revise(base_png: bytes, idx: int, req: str, ref_bytes: list[bytes]) ->
               + (f"The attached {', '.join(refs)} are the style references; keep following them.\n" if refs else "")
               + (f"The attached {', '.join(projs)} are my design drawings: keep the content consistent with them; "
                  "do not invent programs, labels or numbers.\n" if projs else "")
-              + "Reply in Korean.")
+              + f"{prompts.DETAIL_EN[detail]}\n{prompts.EFFICIENCY_EN}")
     return _codex_call(prompt, [base, *refs, *projs], req, ss.get("codex_session"))
+
+
+def ensure_rules(prompt: str) -> str:
+    """Claude 검토본이 '생성만 하기'·디테일 규칙을 빠뜨렸으면 다시 붙인다 (OpenAI 토큰 절약)."""
+    if "WORK EFFICIENTLY" not in prompt and "효율적으로" not in prompt:
+        prompt += "\n\n" + (prompts.EFFICIENCY_KO if prompt_lang == "한국어" else prompts.EFFICIENCY_EN)
+    if "Detail level" not in prompt and "디테일" not in prompt:
+        prompt += "\n" + (prompts.DETAIL_KO[detail] if prompt_lang == "한국어" else prompts.DETAIL_EN[detail])
+    return prompt
 
 
 def final_prompt(draft: str) -> str:
     """검토 결과가 지금 초안 기준이고 '검토본 사용'이 켜져 있으면 검토본, 아니면 초안."""
     r = ss.get("review")
     if r and r["draft"] == draft and ss.get("use_reviewed", True) and ss.get("reviewed_text"):
-        return ss.reviewed_text
+        return ensure_rules(ss.reviewed_text)
     return draft
 
 
@@ -702,7 +718,7 @@ def regenerate_from_qa(i: int) -> bool:
                   "`1_sketch.png` = original sketch (structure reference)"
                   + (f"; {', '.join(refs)} = style references" if refs else "")
                   + (f"; {', '.join(projs)} = my design drawings (content facts — do not invent anything beyond them)"
-                     if projs else "") + ".\nReply in Korean.")
+                     if projs else "") + f".\n{prompts.DETAIL_EN[detail]}\n{prompts.EFFICIENCY_EN}")
         return _codex_call(prompt, [base, "1_sketch.png", *refs, *projs], note, ss.get("codex_session"))
     if use_api:
         with st.spinner(f"v{i + 1} 검수 수정안으로 다시 생성 중..."):

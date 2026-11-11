@@ -96,6 +96,8 @@ def run(workdir: Path, prompt: str, images: list[str], out_name: str, model: str
         "HOW TO DELIVER (Codex):\n"
         "- Use the built-in image generation tool ($imagegen) with the attached image(s) as input/reference.\n"
         "- Do not write code, install anything or call external APIs.\n"
+        "- Generate once. Do not open, inspect, critique or re-check the generated image, and do not regenerate it "
+        "unless the tool failed — a separate reviewer checks it.\n"
         f"- Save the final image as `{out_name}` in the current directory, then print a line `SAVED: {out_name}`."
     )
     common = ["--skip-git-repo-check", "--sandbox", "workspace-write", "-m", model,

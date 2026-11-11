@@ -22,25 +22,49 @@ TYPE_EN = {
 QUALITY_EN = {
     "초안 (빠름)": "Quick rough draft quality (minimal detail).",
     "표준": "Standard presentation quality.",
-    "고화질": "Highest quality: maximum resolution, crisp lines and legible text, rich texture and detail.",
+    "고화질": "Highest quality: maximum resolution, crisp lines and legible text (resolution, not extra detail).",
 }
 QUALITY_KO = {
     "초안 (빠름)": "빠르게 확인할 러프 초안 수준으로 (디테일 최소).",
     "표준": "발표용 표준 품질로.",
-    "고화질": "최고 품질로: 가능한 최대 해상도, 선과 글자를 선명하게, 질감과 디테일을 충실하게.",
+    "고화질": "최고 품질로: 가능한 최대 해상도, 선과 글자를 선명하게 (해상도를 높이라는 뜻이지 디테일을 더하라는 뜻은 아님).",
 }
 ASPECT_EN = {"자동": "", "가로 (3:2)": "landscape 3:2", "세로 (2:3)": "portrait 2:3", "정사각형": "square 1:1"}
 THINK_EN = {
     "자동": "",
-    "빠르게": "Be quick: skip the style summary and go straight to the image.",
-    "깊게 생각": "Think carefully first: study the sketch's geometry, hierarchy and the references' graphic rules "
-                 "in detail before generating, then double-check the result against the sketch.",
+    "빠르게": "Draw directly.",
+    "깊게 생각": "Before drawing, read the inputs carefully (structure, facts, style rules), then draw once.",
 }
 THINK_KO = {
     "자동": "",
-    "빠르게": "빠르게: 스타일 요약은 건너뛰고 바로 이미지를 만들어줘.",
-    "깊게 생각": "깊게 생각해줘: 생성 전에 스케치의 형태·위계와 레퍼런스의 그래픽 규칙을 자세히 분석하고, "
-                 "생성 후 스케치와 비교해 다시 점검해줘.",
+    "빠르게": "바로 그려줘.",
+    "깊게 생각": "그리기 전에 입력(구조·사실·스타일 규칙)을 꼼꼼히 읽고, 한 번에 그려줘.",
+}
+
+# OpenAI 쪽은 '생성만': 자체 검토·재생성·설명으로 토큰을 쓰지 않게 (검수는 Claude가 따로 함)
+EFFICIENCY_EN = ("WORK EFFICIENTLY: produce exactly ONE image in a single pass. Do not critique, verify, compare or "
+                 "regenerate it yourself, do not make variants, and do not explain your process — a separate reviewer "
+                 "checks the result. When done, reply with one short line in Korean.")
+EFFICIENCY_KO = ("효율적으로: 이미지 한 장을 한 번에 만들어줘. 스스로 검토·비교·재생성하지 말고, 여러 안을 만들지 말고, "
+                 "과정 설명도 하지 마 — 검수는 따로 해. 끝나면 한국어로 한 줄만 답해줘.")
+
+# 첨경·디테일 수준 (사람 옷 재질 같은 과한 디테일 방지)
+DETAIL_LEVELS = ["단순", "사실적 (과한 디테일 없이)", "풍부"]
+DETAIL_EN = {
+    "단순": "Detail level SIMPLE: entourage (people, trees, cars, furniture) as clean silhouettes or simple shapes; "
+            "flat surfaces; no textures, faces or small ornaments.",
+    "사실적 (과한 디테일 없이)": "Detail level REALISTIC BUT RESTRAINED: people, trees, cars and furniture look realistic in "
+                         "proportion, pose and silhouette, but WITHOUT fine detail — no clothing fabric or textures, no "
+                         "facial features, no logos, no leaf-by-leaf foliage, no tiny props. Put detail only where the "
+                         "drawing's message needs it.",
+    "풍부": "Detail level RICH: realistic entourage and material textures are welcome, but never let detail compete "
+            "with the drawing's main message.",
+}
+DETAIL_KO = {
+    "단순": "디테일 단순: 사람·나무·차·가구는 깔끔한 실루엣이나 단순한 형태로, 질감·얼굴·작은 장식 없이.",
+    "사실적 (과한 디테일 없이)": "디테일 절제: 사람·나무·차·가구는 비례·자세·실루엣이 사실적이면 충분. 옷 재질·질감, 얼굴, 로고, "
+                         "잎 하나하나, 작은 소품 같은 세부 묘사는 넣지 말 것. 디테일은 도면이 전달할 내용에만.",
+    "풍부": "디테일 풍부: 사실적인 첨경과 재료 질감 허용. 단, 디테일이 주제를 가리지 않게.",
 }
 
 
@@ -173,6 +197,7 @@ class Spec:
     think: str = "자동"
     extra: str = ""
     style_strength: str = "균형"  # 구조 우선 / 균형 / 스타일 우선
+    detail: str = "사실적 (과한 디테일 없이)"  # DETAIL_LEVELS
     project_text: str = ""  # 내 설계의 프로그램·설계 논리 글
     n_project: int = 0  # 첨부하는 내 설계 도면/다이어그램 장수
     facts_strict: bool = True  # 설계 자료에 없는 내용 추가 금지
@@ -268,13 +293,7 @@ def chatgpt_en(s: Spec, n_refs: int, board: bool) -> str:
         images += f"\n- {project_names(s.n_project)} = MY DESIGN DRAWINGS (content facts only, not style)"
     aspect = f" Aspect ratio: {ASPECT_EN[s.aspect]}." if ASPECT_EN.get(s.aspect) else ""
     think = f"\n{THINK_EN[s.think]}" if THINK_EN.get(s.think) else ""
-    steps = (
-        "1) Generate the diagram image."
-        if s.think == "빠르게" or not (n_refs or board)
-        else "1) First summarize the references' graphic style in ≤5 bullets "
-             "(projection, line-weight hierarchy, palette with hex, texture, annotation, entourage).\n"
-             "2) Then generate the diagram image in that style."
-    )
+    steps = "Generate the image."
     return f"""Create a presentation-ready {WORK_EN[s.work_type]} from the attached image(s).
 If the images are not attached yet, reply only "이미지를 첨부해 주세요" and wait for my next message with the images.
 {ref_guard_en(n_refs, board)}
@@ -292,13 +311,15 @@ PRIORITY 2 — structure:
 {style_header_en(s)}
 {style_en(s)}
 
+{DETAIL_EN[s.detail]}
+
 STEPS
-{steps}
-{QUALITY_EN[s.quality]}{aspect}{think}
+{steps} {QUALITY_EN[s.quality]}{aspect}{think}
 {f"Extra instruction: {s.extra}" if s.extra else ""}
+{EFFICIENCY_EN}
 
 For my later revision requests: keep everything from the previous image unchanged except what I ask to change.
-Keep any text labels exactly as written in the sketch. Write your text replies to me in Korean."""
+Keep any text labels exactly as written in the sketch."""
 
 
 # ---------------------------------------------------------------- ChatGPT (한국어)
@@ -328,9 +349,7 @@ def chatgpt_ko(s: Spec, n_refs: int, board: bool) -> str:
     rule = f"형태 변형 단계 {FORM_LABELS[s.form_level]}: {FORM_KO[s.form_level]}" + (
         f"\n{DRAWING_RULES_KO[s.work_type]}" if s.work_type in DRAWING_RULES_KO else "")
     ratio = f" 비율은 {s.aspect}." if s.aspect != "자동" else ""
-    steps = ("1) 바로 다이어그램 이미지를 생성해줘." if s.think == "빠르게" or not (n_refs or board) else
-             "1) 레퍼런스의 그래픽 스타일(투상법, 선 위계, 색상 hex, 질감, 주석, 첨경)을 5줄 이내로 먼저 정리해줘.\n"
-             "2) 그 스타일로 다이어그램 이미지를 생성해줘.")
+    steps = "이미지를 생성해줘."
     return f"""첨부 이미지로 {WORK_KO[s.work_type]}을(를) 만들어줘.
 아직 이미지가 첨부되지 않았다면 "이미지를 첨부해 주세요"라고만 답하고 다음 메시지를 기다려줘.
 {ref_guard_ko(n_refs, board)}
@@ -347,10 +366,12 @@ def chatgpt_ko(s: Spec, n_refs: int, board: bool) -> str:
 [3순위 · 스타일 — {"엄격히 따를 것 (형태는 스케치 유지)" if s.style_strength == "스타일 우선" else "1, 2순위와 충돌하지 않는 범위에서"}]
 {style}
 
+{DETAIL_KO[s.detail]}
+
 [진행]
-{steps}
-{QUALITY_KO[s.quality]}{ratio} {THINK_KO.get(s.think, "")}
+{steps} {QUALITY_KO[s.quality]}{ratio} {THINK_KO.get(s.think, "")}
 {f"추가 지시: {s.extra}" if s.extra else ""}
+{EFFICIENCY_KO}
 
 이후 수정 요청을 하면, 요청한 부분 외에는 직전 이미지를 그대로 유지해서 다시 생성해줘."""
 
@@ -377,6 +398,8 @@ PRIORITY 2 — structure:
 {style_header_en(s)}
 {style_en(s)}
 
+{DETAIL_EN[s.detail]}
+
 Task: {task}
 {QUALITY_EN[s.quality]} Keep any text labels exactly as in the sketch."""
 
@@ -399,6 +422,7 @@ Review the DRAFT prompt below (it will be pasted into ChatGPT together with the 
 3. Fix conflicts between the goal, keywords, mood, style strength and references; remove vague or redundant wording.
 4. If project documents are given (my design drawings and/or program text): extract the FACTS (program and space names, numbers, areas, floor counts, labels, key design logic), state the ones the diagram needs in the prompt, and remove or correct anything that contradicts them or is not supported by them.
 5. If the work type is a floor plan or section retouch: make sure the prompt locks the drawing geometry (walls, openings, levels, text) at the chosen form change level and only lists rendering operations.
+6. Respect the detail level: do not add requests for extra detail (e.g. clothing fabric, faces, textures on entourage). Keep the prompt's "WORK EFFICIENTLY" line so the image model makes one image without self-review.
 Keep the draft's language, its attachment description, its missing-image guard lines and the "reply in Korean" line. Keep it under ~2,500 characters. Do not invent design content.
 
 Answer in Korean: first a short list of the problems you found (most important first), then the improved prompt inside ONE code block (```) so I can copy it.
@@ -428,6 +452,7 @@ Review the DRAFT prompt below. It will be sent to ChatGPT/Codex (image generatio
 3. Fix conflicts between the goal, keywords, mood, style strength and references; remove vague or redundant wording.
 4. If project documents are given (my design drawings and/or program text): extract the FACTS (program and space names, numbers, areas, floor counts, labels, key design logic), state the ones the diagram needs in the prompt, and remove or correct anything that contradicts them or is not supported by them.
 5. If the work type is a floor plan or section retouch: make sure the prompt locks the drawing geometry (walls, openings, levels, text) at the chosen form change level and only lists rendering operations.
+6. Respect the detail level: do not add requests for extra detail (e.g. clothing fabric, faces, textures on entourage). Keep the prompt's "WORK EFFICIENTLY" line so the image model makes one image without self-review.
 Keep the draft's language, its attachment description (file names), and the "reply in Korean" line. Keep it under ~2,500 characters. Do not invent design content. Do not edit or create any files.
 
 OUTPUT FORMAT (exactly):
@@ -454,6 +479,7 @@ QA_CRITERIA = """Check the GENERATED result against:
 5. Facts: if project documents are given, every program/space name, number, floor count, label and design move in the result must be supported by them or the sketch. Flag anything invented or contradicting them.
 6. Drawing accuracy (when the work type is a floor plan or section retouch): compared with the original drawing (SKETCH), walls and their thickness, doors, windows, stairs, columns/grid, levels, room names, areas and dimensions must be unchanged and the view must stay orthographic. Flag any moved, missing, added or distorted element.
 Respect the form change level in the user settings: at levels 1-2 any geometric change is a problem; at levels 4-5 simplification is allowed but the concept must remain.
+Respect the detail level in the user settings: never ask for more detail than it allows (simple, realistic entourage without clothing textures or faces is intended); flag excessive detail only if it distracts from the message.
 Only flag problems that clearly matter for a presentation drawing. If it is good enough, PASS."""
 
 
