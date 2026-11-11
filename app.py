@@ -118,36 +118,85 @@ def gemini_models(key: str) -> list[str]:
 # ---------------------------------------------------------------- 설정
 with st.sidebar:
     st.header("설정")
-    with st.expander("💾 프로젝트 프리셋 (같은 프로젝트 여러 컷을 같은 톤으로)"):
+    with st.expander("💾 프로젝트 프리셋 (설계 자료·재료·느낌·기준 컷 저장)"):
         PRESET_KEYS = (["materials", "material_legend", "diagram_goal", "mood", "picked", "detail", "style_strength",
                         "project_text", "facts_strict"] + [f"types_{w}" for w in prompts.WORK_TYPES])
+        PROJECT_KEYS = ["project_text", "facts_strict"]
         PRESET_DIR.mkdir(exist_ok=True)
-        names = sorted(p.stem for p in PRESET_DIR.glob("*.json"))
-        sel = st.selectbox("불러오기", ["(선택)"] + names, key="preset_sel")
-        if st.button("불러오기", disabled=sel == "(선택)"):
-            data = json.loads((PRESET_DIR / f"{sel}.json").read_text(encoding="utf-8"))
-            for k in PRESET_KEYS:
+
+        def _b64(items: list[bytes]) -> list[str]:
+            seen, out = set(), []
+            for b in items:
+                h = hash(b)
+                if h not in seen:
+                    seen.add(h)
+                    out.append(base64.b64encode(b).decode())
+            return out
+
+        def _current_project_imgs() -> list[bytes]:
+            up = [f.getvalue() for f in (ss.get("project_files") or [])]
+            cad = [ss.cad_items[f.file_id]["png"] for f in (ss.get("cad_files") or [])
+                   if ss.cad_items.get(f.file_id, {}).get("png")]
+            return up + cad + list(ss.pasted_projects)
+
+        def _current_ref_imgs() -> list[bytes]:
+            return [f.getvalue() for f in (ss.get("ref_files") or [])] + list(ss.pasted_refs)
+
+        def _load(data: dict, only_project: bool) -> None:
+            keys = PROJECT_KEYS if only_project else PRESET_KEYS
+            for k in keys:
                 if k in data:
                     ss[k] = data[k]
+            if data.get("project_imgs"):
+                ss.pasted_projects = [base64.b64decode(x) for x in data["project_imgs"]]
+            if only_project:
+                return
             ss.mood_ver += 1
-            for k in ("anchor_png", "material_map"):
-                if data.get(k):
-                    b = base64.b64decode(data[k])
-                    if k == "anchor_png":
-                        ss.anchor = {"png": b, "note": data.get("anchor_note", "프리셋 기준 컷")}
-                    else:
-                        ss.material_map = b
-            st.rerun()
-        pname = st.text_input("현재 설정을 저장할 이름", placeholder="예: OO복합시설_외관")
+            if data.get("ref_imgs"):
+                ss.pasted_refs = [base64.b64decode(x) for x in data["ref_imgs"]]
+            if data.get("anchor_png"):
+                ss.anchor = {"png": base64.b64decode(data["anchor_png"]), "note": data.get("anchor_note", "프리셋 기준 컷")}
+            if data.get("material_map"):
+                ss.material_map = base64.b64decode(data["material_map"])
+
+        names = sorted(p.stem for p in PRESET_DIR.glob("*.json"))
+        sel = st.selectbox("불러오기", ["(선택)"] + names, key="preset_sel")
+        if sel != "(선택)":
+            data = json.loads((PRESET_DIR / f"{sel}.json").read_text(encoding="utf-8"))
+            parts = [
+                "설계 글 ✓" if (data.get("project_text") or "").strip() else "",
+                f"설계 도면 {len(data.get('project_imgs', []))}장" if data.get("project_imgs") else "",
+                f"레퍼런스 {len(data.get('ref_imgs', []))}장" if data.get("ref_imgs") else "",
+                "재료 ✓" if (data.get("materials") or "").strip() else "",
+                "재료 맵 ✓" if data.get("material_map") else "",
+                "기준 컷 ✓" if data.get("anchor_png") else "",
+            ]
+            st.caption("들어 있는 것: " + (" · ".join(p for p in parts if p) or "느낌·키워드 등 설정"))
+            l1, l2 = st.columns(2)
+            if l1.button("전체 불러오기"):
+                _load(data, only_project=False)
+                st.rerun()
+            if l2.button("설계 자료만", help="설계 글 + 설계 도면만 불러와요 (느낌·재료·기준 컷은 그대로)"):
+                _load(data, only_project=True)
+                st.rerun()
+        st.divider()
+        pname = st.text_input("현재 설정을 저장할 이름", placeholder="예: OO복합시설_설계자료")
+        inc_proj = st.checkbox("📐 설계 자료 포함 (설계 글 + 도면 이미지 + DXF·SKP에서 뽑은 도면)", value=True)
+        inc_refs = st.checkbox("🖼️ 레퍼런스 이미지 포함", value=False)
         if st.button("저장", disabled=not pname.strip()):
-            data = {k: ss.get(k) for k in PRESET_KEYS if k in ss}
+            data = {k: ss.get(k) for k in PRESET_KEYS if k in ss and (inc_proj or k not in PROJECT_KEYS)}
+            if inc_proj and (imgs := _current_project_imgs()):
+                data["project_imgs"] = _b64(imgs)
+            if inc_refs and (imgs := _current_ref_imgs()):
+                data["ref_imgs"] = _b64(imgs)
             if ss.anchor:
                 data["anchor_png"] = base64.b64encode(ss.anchor["png"]).decode()
                 data["anchor_note"] = ss.anchor["note"]
             if ss.material_map:
                 data["material_map"] = base64.b64encode(ss.material_map).decode()
             (PRESET_DIR / f"{pname.strip()}.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-            st.success("저장했어요. 다른 날·다른 컷에서 불러오면 재료·느낌·키워드·기준 컷이 그대로 돌아와요.")
+            st.success(f"'{pname.strip()}' 저장했어요"
+                       + (f" (설계 도면 {len(data.get('project_imgs', []))}장 포함)" if data.get("project_imgs") else "") + ".")
     saved_key = _read(KEY_FILE)
     env_key = os.getenv("OPENAI_API_KEY", saved_key)
     mode = st.radio(
@@ -1000,7 +1049,7 @@ c1, c2 = st.columns(2)
 # ---------------------------------------------------------------- ② 분위기 · 레퍼런스
 with c1:
     st.subheader("② 분위기 · 레퍼런스")
-    refs = st.file_uploader("레퍼런스 이미지 (여러 장, 선택)", type=["png", "jpg", "jpeg", "webp"],
+    refs = st.file_uploader("레퍼런스 이미지 (여러 장, 선택)", type=["png", "jpg", "jpeg", "webp"], key="ref_files",
                             accept_multiple_files=True)
     pa, pb = st.columns(2)
     if pa.button("📋 레퍼런스 붙여넣기", help="복사한 이미지를 레퍼런스로 추가 (핀터레스트, 웹, 포토샵 등)"):
