@@ -11,13 +11,18 @@ if not defined PY goto NOPY
 if "%1"=="min" goto RUN
 
 echo Using: %PY%
-echo Checking packages... (first time takes 1-2 minutes)
-%PY% -m pip install --disable-pip-version-check -r requirements.txt
+rem Install packages only when requirements.txt changed since the last successful install (fast start)
+%PY% -c "import hashlib,pathlib,sys;h=hashlib.sha256(pathlib.Path('requirements.txt').read_bytes()).hexdigest();p=pathlib.Path('.installed');sys.exit(0 if p.exists() and p.read_text().strip()==h else 1)"
 if errorlevel 1 (
-  echo.
-  echo [!] Package install failed. Please send a screenshot of this window.
-  pause
-  exit /b
+  echo Installing packages... ^(only after an update - may take a few minutes^)
+  %PY% -m pip install --disable-pip-version-check -r requirements.txt
+  if errorlevel 1 (
+    echo.
+    echo [!] Package install failed. Please send a screenshot of this window.
+    pause
+    exit /b
+  )
+  %PY% -c "import hashlib,pathlib;pathlib.Path('.installed').write_text(hashlib.sha256(pathlib.Path('requirements.txt').read_bytes()).hexdigest())"
 )
 
 rem Relaunch minimized so the console stays out of the way

@@ -4,3 +4,6 @@ gatherUsageStats = false
 [server]
 headless = true
 port = 8501
+# 코드 파일 변경 감시 끄기: 사용자는 코드를 고치지 않고, outputs 폴더 등이 커지면 감시가 느려져요
+fileWatcherType = "none"
+runOnSave = false

@@ -16,7 +16,6 @@ from urllib.parse import urlencode
 from pathlib import Path
 
 import streamlit as st
-from openai import OpenAI
 from PIL import Image
 from st_keyup import st_keyup
 
@@ -83,24 +82,32 @@ def _read(p: Path) -> str:
     return p.read_text().strip() if p.exists() else ""
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner="Codex·Claude Code 연결 상태 확인 중...")
+def tool_status() -> dict:
+    """Codex·Claude Code 설치/로그인 확인 4가지를 동시에 실행 (순서대로 하면 윈도우에서 수 초~십수 초)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    jobs = {"codex": codex_bridge.codex_version, "codex_login": codex_bridge.login_status,
+            "claude": claude_cli.claude_version, "claude_login": claude_cli.login_status}
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futs = {k: ex.submit(f) for k, f in jobs.items()}
+    return {k: f.result() for k, f in futs.items()}
+
+
 def claude_login_status() -> str:
-    return claude_cli.login_status()
+    return tool_status()["claude_login"]
 
 
-@st.cache_data(ttl=600, show_spinner=False)
 def claude_code_status() -> str:
-    return claude_cli.claude_version()
+    return tool_status()["claude"]
 
 
-@st.cache_data(ttl=600, show_spinner=False)
 def codex_login_status() -> str:
-    return codex_bridge.login_status()
+    return tool_status()["codex_login"]
 
 
-@st.cache_data(ttl=600, show_spinner=False)
 def codex_status() -> str:
-    return codex_bridge.codex_version()
+    return tool_status()["codex"]
 
 
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
@@ -177,7 +184,7 @@ with st.sidebar:
                 except RuntimeError as e:
                     st.error(str(e))
             if st.button("로그인 상태 새로고침"):
-                codex_login_status.clear()
+                tool_status.clear()
                 st.rerun()
         else:
             st.warning(codex_bridge.SETUP_HELP)
@@ -207,7 +214,7 @@ with st.sidebar:
                     except RuntimeError as e:
                         st.error(str(e))
                 if st.button("로그인 상태 새로고침", key="cc_login_refresh"):
-                    claude_login_status.clear()
+                    tool_status.clear()
                     st.rerun()
             else:
                 st.warning(claude_cli.SETUP_HELP)
@@ -445,6 +452,8 @@ def render(base_png: bytes, ref_bytes: list[bytes], instruction: str) -> bytes:
              + [to_png_file(b, f"project{i}.png") for i, b in enumerate(project_bytes)])
     kwargs = dict(model=image_model, image=files, prompt=prompt,
                   size=ASPECT[aspect], quality=QUALITY[quality_label][0])
+    from openai import OpenAI  # 필요할 때만 불러와서 앱 시작을 빠르게
+
     client = OpenAI(api_key=api_key)
     try:
         r = client.images.edit(**kwargs, input_fidelity="high")
@@ -1291,12 +1300,15 @@ if ss.versions:
     st.divider()
     st.subheader("④ 결과 & 수정")
     h1, h2, h3 = st.columns([1, 1, 3])
-    h1.download_button(
-        "PPT (전체 버전)",
-        bridge.build_pptx([(x["png"], f"v{i + 1} · {x['note']}") for i, x in enumerate(ss.versions)]),
-        "diagrams.pptx",
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    )
+    # PPT는 버튼을 눌렀을 때만 만든다 (매 화면 갱신마다 만들면 결과가 쌓일수록 느려짐)
+    if ss.get("pptx_n") == len(ss.versions) and ss.get("pptx"):
+        h1.download_button("⬇️ PPT 받기", ss.pptx, "diagrams.pptx",
+                           "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+    elif h1.button("PPT 만들기 (전체 버전)"):
+        with st.spinner("PPT 만드는 중..."):
+            ss.pptx = bridge.build_pptx([(x["png"], f"v{i + 1} · {x['note']}") for i, x in enumerate(ss.versions)])
+            ss.pptx_n = len(ss.versions)
+        st.rerun()
     if h2.button("결과 폴더"):
         bridge.open_folder(OUT_DIR)
     h3.caption("새로 만든 이미지는 기존 이미지를 대체하지 않고 아래에 추가돼요.")

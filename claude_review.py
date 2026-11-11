@@ -11,7 +11,6 @@ import base64
 import io
 import json
 
-import anthropic
 from PIL import Image
 
 MODELS = {
@@ -78,6 +77,7 @@ def review(api_key: str, model: str, effort: str, draft: str, context_ko: str,
            sketch: bytes, refs: list[bytes], projects: list[bytes] | None = None,
            extras: list[tuple[bytes, str]] | None = None) -> dict:
     """반환: SCHEMA 형태의 dict (+ 'model_used'). 실패 시 RuntimeError(한국어 메시지)."""
+    import anthropic  # 필요할 때만 불러와서 앱 시작을 빠르게
     content: list[dict] = [{"type": "text", "text": "SKETCH (content to draw):"}, _image_block(sketch)]
     for i, b in enumerate(refs, 1):
         content += [{"type": "text", "text": f"REF {i} (style only):"}, _image_block(b)]
@@ -147,6 +147,8 @@ def qa(api_key: str, model: str, effort: str, result_png: bytes, sketch: bytes, 
        context_ko: str, prompt_used: str, projects: list[bytes] | None = None,
        extras: list[tuple[bytes, str]] | None = None) -> dict:
     """생성 결과 검수 (API). 반환: {"verdict": "pass"|"revise", "issues_ko", "revision_prompt"}"""
+    import anthropic
+
     import prompts
 
     content: list[dict] = [{"type": "text", "text": "RESULT (to check):"}, _image_block(result_png),
