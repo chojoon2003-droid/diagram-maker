@@ -26,7 +26,7 @@ if errorlevel 1 (
 )
 
 rem Relaunch minimized so the console stays out of the way
-start "Diagram Agent (close this window to stop)" /min cmd /c ""%~f0" min"
+start "Arch Image Agent (close this window to stop)" /min cmd /c ""%~f0" min"
 exit /b
 
 :RUN
@@ -43,7 +43,7 @@ echo  1. Install Python from https://www.python.org/downloads/
 echo     On the first screen, CHECK "Add python.exe to PATH", then "Install Now".
 echo  2. (If it still fails) Windows Settings - Apps - Advanced app settings
 echo     - App execution aliases: turn OFF "python.exe" and "python3.exe".
-echo  3. Run Diagram Agent again.
+echo  3. Run Arch Image Agent again.
 echo.
 start "" https://www.python.org/downloads/
 pause

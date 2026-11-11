@@ -1,5 +1,5 @@
 """
-건축 다이어그램 에이전트 (프로토타입)
+건축 이미지 에이전트 (프로토타입)
 
 우선순위:  ① 어떤 다이어그램인지  >  ② 스케치 구조  >  ③ 분위기·레퍼런스 스타일
  - 분위기 문장을 쓰면 구절마다 '대체 키워드'를 실시간 추천 (Gemini 무료 / 기본 사전)
@@ -54,13 +54,13 @@ QUALITY = {  # 화면 표시: (API quality, ChatGPT 지시문)
 }
 ASPECT = {"자동": "auto", "가로 (3:2)": "1536x1024", "세로 (2:3)": "1024x1536", "정사각형": "1024x1024"}
 
-st.set_page_config(page_title="건축 다이어그램 에이전트", layout="wide")
+st.set_page_config(page_title="건축 이미지 에이전트", layout="wide")
 st.markdown(  # 키워드 버튼이 옆으로 잘리지 않고 줄바꿈되게
     "<style>[data-testid='stButtonGroup'] > div {flex-wrap: wrap; overflow-x: visible;}</style>",
     unsafe_allow_html=True,
 )
 
-st.title("🏛️ 건축 다이어그램 에이전트")
+st.title("🏛️ 건축 이미지 에이전트")
 work_type = st.radio("작업 종류", prompts.WORK_TYPES, horizontal=True, key="work_type",
                      help="다이어그램: 스케치를 다이어그램으로\n\n평면·단면 리터칭: 내 도면의 선은 그대로 두고 색·질감·그림자·첨경을 입혀요")
 is_drawing = work_type != "다이어그램"  # 다이어그램이 아닌 모든 작업 (평면·단면·렌더링)
@@ -768,7 +768,7 @@ def add_version(png: bytes, note: str, prompt: str = "", qa: bool = True, notify
             title, body = f"⚠️ v{n} 완성 · Claude 검수: 수정 필요", " / ".join(first) or note
         else:
             title, body = f"✅ v{n} 완성 · Claude 검수 통과", note
-        bridge.notify(title, body + "\n건축 다이어그램 에이전트에서 확인하세요.", saved)
+        bridge.notify(title, body + "\n건축 이미지 에이전트에서 확인하세요.", saved)
 
 
 # ---------------------------------------------------------------- 결과 검수 (Claude)

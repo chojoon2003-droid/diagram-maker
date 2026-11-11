@@ -1,7 +1,8 @@
-# 건축 다이어그램 에이전트
+# 건축 이미지 에이전트
 
-레퍼런스(이미지·느낌 텍스트) + 다이어그램 설명 + 내 스케치를 넣으면,
-프롬프트 작성 → Claude 검토 → OpenAI(Codex / GPT-6 Astra)로 다이어그램 이미지 생성까지 한 번에 진행하는 로컬 앱.
+레퍼런스(이미지·느낌 텍스트) + 설명 + 내 스케치·도면·3D 모델 뷰를 넣으면,
+프롬프트 작성 → Claude 검토 → OpenAI(Codex / GPT-6 Astra)로 이미지 생성 → Claude 검수까지 한 번에 진행하는 로컬 앱.
+작업 종류: **다이어그램 · 평면 리터칭 · 단면 리터칭 · 렌더링**
 
 ## 다른 컴퓨터에서 받기
 **git 사용 (추천)** — 명령 프롬프트(cmd)에서:
@@ -23,7 +24,7 @@ API 키 파일과 결과물(`outputs/`)은 git이 관리하지 않아 업데이�
 ## 처음 실행
 자세한 내용은 [`사용법.txt`](사용법.txt) 참고.
 1. 파이썬 설치 (설치 화면에서 "Add python.exe to PATH" 체크)
-2. `make_desktop_shortcut.bat` 더블클릭 → 바탕화면 "Diagram Agent" 아이콘 생성
+2. `make_desktop_shortcut.bat` 더블클릭 → 바탕화면 "Arch Image Agent" 아이콘 생성
 3. 아이콘 더블클릭 → 크롬에서 앱이 열림
 
 원클릭 자동(Codex + Claude Code)을 쓰려면:

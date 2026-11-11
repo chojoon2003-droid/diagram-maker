@@ -1,4 +1,4 @@
-건축 다이어그램 에이전트 - 사용법
+건축 이미지 에이전트 - 사용법
 
 [다른 컴퓨터에서 받기 (git)]  저장소: https://github.com/chojoon2003-droid/diagram-maker (비공개)
 처음 한 번:
@@ -20,11 +20,11 @@ git 없이 받기: 저장소 페이지 -> 초록색 Code 버튼 -> Download ZIP 
 1. 파이썬 설치: https://www.python.org/downloads/
    설치 첫 화면에서 "Add python.exe to PATH" 체크 후 Install Now
 2. 이 폴더를 원하는 곳(예: 문서)에 두고 make_desktop_shortcut.bat 더블클릭
-   -> 바탕화면에 "Diagram Agent" 아이콘 생성
+   -> 바탕화면에 "Arch Image Agent" 아이콘 생성
 3. 브라우저에서 chatgpt.com 에 미리 로그인해 두기
 
 [매번]
-- 바탕화면 "Diagram Agent" 더블클릭 -> 잠시 후 브라우저에 앱이 열림
+- 바탕화면 "Arch Image Agent" 더블클릭 -> 잠시 후 브라우저에 앱이 열림
 - 종료: 작업표시줄에 최소화된 검은 창을 닫기
 
 [ChatGPT 구독 모드 사용 순서]  (API 키 필요 없음)
