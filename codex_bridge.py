@@ -184,3 +184,21 @@ def start_login(open_url, wait: float = 60.0) -> str:
         raise RuntimeError("Codex 로그인 주소를 받지 못했어요. 명령 프롬프트에서 `codex login`을 직접 실행해 주세요.")
     open_url(found[0])
     return found[0]
+
+
+def selftest(model: str, timeout: int = 240) -> tuple[bool, float, str]:
+    """이미지 없이 아주 짧은 요청으로 Codex가 실제로 응답하는지 확인. (성공 여부, 걸린 초, 출력 요약)"""
+    import tempfile
+
+    exe = find_codex()
+    if not exe:
+        return False, 0.0, "Codex가 설치되어 있지 않아요."
+    t = time.time()
+    with tempfile.TemporaryDirectory() as d:
+        try:
+            code, out = _exec([exe, "exec", "--skip-git-repo-check", "-m", model,
+                               "-c", "model_reasoning_effort=low", "-"],
+                              "Reply with exactly: OK. Do not run any tools.", Path(d), timeout)
+        except subprocess.TimeoutExpired:
+            return False, time.time() - t, f"{timeout}초 안에 응답이 없어요."
+    return code == 0 and "OK" in out, time.time() - t, out[-400:]

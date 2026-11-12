@@ -164,3 +164,27 @@ def qa(workdir: Path, result: str, sketch: str, refs: list[str], context_ko: str
     if verdict == "revise" and not revision:
         verdict = "pass_with_notes"  # 문제는 적었지만 수정안을 못 받은 경우
     return {"verdict": verdict, "issues_ko": issues.strip(), "revision_prompt": revision}
+
+
+def selftest(model: str = "sonnet", timeout: int = 180) -> tuple[bool, float, str]:
+    """아주 짧은 요청으로 Claude Code가 실제로 응답하는지 확인. (성공 여부, 걸린 초, 출력 요약)"""
+    import time
+
+    exe = find_claude()
+    if not exe:
+        return False, 0.0, "Claude Code가 설치되어 있지 않아요."
+    t = time.time()
+    try:
+        r = subprocess.run([exe, "-p", "--output-format", "json", "--model", model],
+                           input="Reply with exactly: OK".encode("utf-8"), capture_output=True,
+                           timeout=timeout, creationflags=NO_WINDOW)
+    except subprocess.TimeoutExpired:
+        return False, time.time() - t, f"{timeout}초 안에 응답이 없어요."
+    out = r.stdout.decode("utf-8", "replace").strip()
+    err = r.stderr.decode("utf-8", "replace").strip()
+    try:
+        data = json.loads(out.splitlines()[-1]) if out else {}
+    except json.JSONDecodeError:
+        data = {}
+    ok = r.returncode == 0 and not data.get("is_error") and "OK" in str(data.get("result", ""))
+    return ok, time.time() - t, (str(data.get("result", "")) or out or err)[-400:]

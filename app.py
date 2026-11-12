@@ -9,7 +9,9 @@
 
 import base64
 import io
+import hashlib
 import json
+import time
 import os
 import re
 from urllib.parse import urlencode
@@ -40,6 +42,9 @@ CHATGPT_URL = "https://chatgpt.com/"
 CLAUDE_URL = "https://claude.ai/new"
 DEFAULT_INBOX = APP_DIR / "inbox"
 PRESET_DIR = APP_DIR / "presets"
+LOG_DIR = APP_DIR / "logs"
+CLAUDE_DIR = APP_DIR / "to_claude"
+DOWNLOADS = Path.home() / "Downloads"  # Claude Code가 읽을 이미지(크기를 줄인 사본)
 DEFAULT_INBOX.mkdir(exist_ok=True)
 
 PLAN_TYPES = ["실별 색 구분", "가구·인테리어", "조경·외부공간", "바닥 재질", "그림자·깊이감", "흑백 포셰 강조", "동선 표시"]
@@ -219,7 +224,7 @@ with st.sidebar:
 
     think, open_target, attach_mode, prompt_lang = "자동", "Chrome", "파일 여러 장", "English (추천)"
     codex_model = "gpt-6-astra"
-    pipe_engine, cc_model, cc_ver = "검토 없이", "Opus (가장 꼼꼼)", ""
+    pipe_engine, cc_model, cc_ver = "Claude Code (구독)", "Opus (가장 꼼꼼)", ""
     if use_codex:
         ver = codex_status()
         if ver:
@@ -329,14 +334,22 @@ with st.sidebar:
                                "(Claude Code 로그인 또는 Claude API 키 필요)")
     saved_c = _read(CLAUDE_KEY_FILE)
     env_c = os.getenv("ANTHROPIC_API_KEY", saved_c)
+    review_modes = ["Claude Code (구독, 자동)", "Claude 구독 (직접 확인)", "Claude API (자동)"]
     review_mode = st.radio(
-        "검토 방식", ["Claude 구독 (직접 확인)", "Claude API (자동)"], index=1 if env_c else 0,
-        help="구독: Claude 웹/앱이 열리고 직접 확인 → 검토본을 복사해 가져오기 (추가 비용 없음)\n\n"
+        "검토 방식", review_modes,
+        index=0 if claude_cli.find_claude() else (2 if env_c else 1),
+        help="Claude Code: 구독 계정으로 로그인한 Claude Code가 앱 안에서 자동 검토·검수 (추가 비용 없음, 추천)\n\n"
+             "구독(직접 확인): Claude 웹/앱이 열리고 직접 확인 → 검토본을 복사해 가져오기\n\n"
              "API: 앱 안에서 자동 검토 (API 키 필요, 사용량 과금)",
     )
+    claude_code_mode = review_mode.startswith("Claude Code")
     claude_sub = review_mode.startswith("Claude 구독")
     claude_key, claude_model_label, claude_effort, claude_target = "", list(claude_review.MODELS)[0], "high", "Chrome"
-    if claude_sub:
+    if claude_code_mode:
+        if not use_codex:  # Codex 모드에서는 위 '원클릭' 칸에서 고름
+            cc_model = st.selectbox("Claude Code 모델", list(claude_cli.MODELS), key="cc_model_review")
+        st.caption("구독 계정으로 로그인한 Claude Code가 앱 안에서 검토·검수해요. 설치·로그인 상태는 위 '🩺 준비 상태'에서 확인.")
+    elif claude_sub:
         claude_target = st.radio("Claude 여는 곳", ["Chrome", "Claude 데스크탑 앱", "기본 브라우저"])
         st.caption("ChatGPT로 보내기 전에 Claude가 스케치·레퍼런스를 보고 프롬프트를 고쳐줘요. Claude 구독 사용량 안에서 동작해요.")
     else:
@@ -553,6 +566,23 @@ def map_extra_files() -> list[tuple[str, str]]:
     return [("4_material_map.png", "MATERIAL ID MAP (same camera; flat colors = materials)")] if map_on() else []
 
 
+def run_review_code(ref_bytes: list[bytes], draft: str) -> None:
+    """Claude Code(구독)로 프롬프트 자동 검토"""
+    try:
+        refs, projs, extra = claude_inputs(ref_bytes)
+        with st.spinner("Claude Code가 스케치·레퍼런스를 보며 검토 중... (1~3분)"):
+            res = with_retry(lambda: claude_cli.review(CLAUDE_DIR, draft, review_context(), "1_sketch.png", refs,
+                                                       claude_cli.MODELS[cc_model], projects=projs, extras=extra),
+                             "프롬프트 검토")
+        ss.review = {"draft": draft, "summary_ko": res["summary_ko"], "issues": [], "sketch_reading_ko": "",
+                     "reference_style_ko": "", "improved_prompt": res["improved_prompt"],
+                     "model_used": "Claude Code (구독)"}
+        ss.reviewed_text = res["improved_prompt"]
+    except RuntimeError as e:
+        log_event("프롬프트 검토 실패", str(e))
+        st.error(str(e).splitlines()[0])
+
+
 def run_review(ref_bytes: list[bytes], draft: str) -> None:
     model = claude_review.MODELS[claude_model_label]
     try:
@@ -641,8 +671,9 @@ def _codex_call(prompt: str, images: list[str], note: str, session: str | None, 
                                    codex_bridge.EFFORT[think], session_id=session)
     except RuntimeError as e:
         st.error(str(e).split("\n\n")[0])
+        log_event("Codex 생성 실패", str(e))
         if notify_on:
-            bridge.notify("❌ 다이어그램 생성 실패", str(e).split("\n")[0][:120])
+            bridge.notify("❌ 이미지 생성 실패", str(e).split("\n")[0][:120])
         detail = str(e).split("\n\n", 1)
         if len(detail) > 1:
             with st.expander("Codex 실행 기록"):
@@ -692,14 +723,23 @@ def run_pipeline(ref_bytes: list[bytes], extra: str, draft: str) -> None:
     projs = [n for n, _ in project_items()]
     bridge.write_images(CODEX_DIR, attach_items(ref_bytes))
     prompt = draft
+    # 시작 전 점검: 막힐 단계가 있으면 미리 알려주기
+    if not codex_status():
+        st.error("Codex가 설치되어 있지 않아 원클릭을 시작할 수 없어요. 위 '🩺 원클릭 준비 상태'를 확인하세요.")
+        return
+    if not codex_login_status().startswith("로그인됨"):
+        st.error("Codex에 로그인되어 있지 않아요. 사이드바의 '🔑 Codex 로그인'을 먼저 해 주세요.")
+        return
     with st.status("🤖 전체 자동 진행 중...", expanded=True) as status:
         st.write("✅ ① 프롬프트 초안 작성 완료")
         if pipe_engine != "검토 없이":
             st.write(f"⏳ ② Claude 검토 중 ({pipe_engine})... 1~3분")
             try:
                 if pipe_engine.startswith("Claude Code"):
-                    res = claude_cli.review(CODEX_DIR, draft, review_context(), "1_sketch.png", refs,
-                                            claude_cli.MODELS[cc_model], projects=projs, extras=map_extra_files())
+                    c_refs, c_projs, c_extra = claude_inputs(ref_bytes)
+                    res = with_retry(lambda: claude_cli.review(
+                        CLAUDE_DIR, draft, review_context(), "1_sketch.png", c_refs, claude_cli.MODELS[cc_model],
+                        projects=c_projs, extras=c_extra), "프롬프트 검토")
                     ss.review = {"draft": draft, "summary_ko": res["summary_ko"], "issues": [],
                                  "sketch_reading_ko": "", "reference_style_ko": "",
                                  "improved_prompt": res["improved_prompt"], "model_used": "Claude Code (구독)"}
@@ -715,6 +755,7 @@ def run_pipeline(ref_bytes: list[bytes], extra: str, draft: str) -> None:
                 prompt = ensure_rules(ss.reviewed_text)
                 st.write("✅ ② Claude 검토 완료 — 검토된 프롬프트로 진행해요")
             except RuntimeError as e:
+                log_event("원클릭 검토 실패", str(e))
                 st.write(f"⚠️ ② Claude 검토 실패 → 초안 그대로 진행: {str(e).splitlines()[0]}")
         ss.gpt_prompt = prompt
         st.write(f"⏳ ③ Codex({codex_model})로 다이어그램 생성 중... 보통 1~5분")
@@ -758,10 +799,59 @@ def final_prompt(draft: str) -> str:
     return draft
 
 
+def _fp(png: bytes) -> str:
+    """이미지 지문 (같은 그림이면 파일 형식이 달라도 같은 값)"""
+    im = Image.open(io.BytesIO(png)).convert("L").resize((32, 32))
+    return hashlib.md5(im.tobytes()).hexdigest()
+
+
+def start_watch(ref_bytes: list[bytes]) -> None:
+    """ChatGPT 결과 자동 가져오기 시작: 지금 클립보드·첨부 이미지는 무시 목록에"""
+    ignore = {_fp(b) for _, b in attach_items(ref_bytes)}
+    if (TO_GPT_DIR / "board.png").exists():
+        ignore.add(_fp((TO_GPT_DIR / "board.png").read_bytes()))
+    ignore |= {_fp(v["png"]) for v in ss.versions}
+    ss.watch = {"since": time.time(), "ignore": ignore, "seen": set()}
+
+
+@st.fragment(run_every=3)
+def chatgpt_watcher() -> None:
+    w = ss.get("watch")
+    if not w or not ss.get("auto_import", True):
+        return
+    mins = int(time.time() - w["since"]) // 60
+    if mins >= 60:
+        ss.watch = None
+        return
+    st.caption(f"👀 ChatGPT 결과를 기다리는 중 ({mins}분 경과) — ChatGPT 이미지를 **우클릭 → 이미지 복사**하거나 "
+               "**다운로드**만 하면 자동으로 가져와서 검수해요. (수정본도 계속 감지)")
+    found = None
+    try:
+        b = bridge.grab_clipboard()
+    except Exception:  # noqa: BLE001
+        b = None
+    if b and (f := _fp(b)) not in w["ignore"]:
+        found = (b, "클립보드", f)
+    if not found and DOWNLOADS.exists():
+        for pth in bridge.latest_images(DOWNLOADS, n=5):
+            if pth.stat().st_mtime < w["since"] or str(pth) in w["seen"]:
+                continue
+            w["seen"].add(str(pth))
+            b = pth.read_bytes()
+            if (f := _fp(b)) not in w["ignore"]:
+                found = (b, f"다운로드 {pth.name}", f)
+                break
+    if found:
+        w["ignore"].add(found[2])
+        register_result(found[0], f"ChatGPT 결과 ({found[1]})")
+        st.rerun()
+
+
 def send_to_chatgpt(ref_bytes: list[bytes], extra: str) -> None:
     prompt = final_prompt(chatgpt_prompt(len(ref_bytes), extra))
     ss.gpt_prompt = prompt
     prepare_attachments(ref_bytes)
+    start_watch(ref_bytes)
 
     ss.prefilled = False
     if open_target == "ChatGPT 데스크탑 앱":
@@ -806,12 +896,22 @@ def add_version(png: bytes, note: str, prompt: str = "", qa: bool = True, notify
     n = len(ss.versions)
     if is_render and ss.get("sketch_bytes"):
         compute_diff(ss.versions[-1])
-    if qa and auto_qa and qa_engine()[0] and ss.get("sketch_bytes"):
-        run_qa(n - 1)
+    skip = None
+    if qa and auto_qa:
+        if not ss.get("sketch_bytes"):
+            skip = "입력 이미지(③)가 없어서"
+        elif not qa_engine()[0]:
+            skip = "검수 엔진(Claude Code 로그인 또는 Claude API 키)이 없어서"
+        elif not run_qa(n - 1):
+            skip = "검수 중 오류가 나서 (logs/agent.log 참고)"
+    if skip:
+        ss.versions[-1]["qa_skip"] = skip
+        st.warning(f"v{n}: {skip} 자동 검수를 못 했어요. 위쪽 '🩺 원클릭 준비 상태'를 확인하세요.")
+        st.toast(f"v{n}: 자동 검수를 못 했어요 — {skip}")
     if notify and notify_on:
         qa = ss.versions[-1].get("qa")
         if not qa:
-            title, body = f"🖼️ v{n} 완성", note
+            title, body = f"🖼️ v{n} 완성 (검수 못 함)" if skip else f"🖼️ v{n} 완성", (skip or "") + " " + note
         elif qa["verdict"] == "revise":
             first = [ln.strip() for ln in qa["issues_ko"].splitlines() if ln.strip()][:2]
             title, body = f"⚠️ v{n} 완성 · Claude 검수: 수정 필요", " / ".join(first) or note
@@ -820,11 +920,60 @@ def add_version(png: bytes, note: str, prompt: str = "", qa: bool = True, notify
         bridge.notify(title, body + "\n건축 이미지 에이전트에서 확인하세요.", saved)
 
 
+# ---------------------------------------------------------------- 기록 · Claude Code 입력 준비 · 재시도
+def log_event(kind: str, text: str) -> None:
+    """문제가 생기면 logs/agent.log 에 남겨서 나중에 원인을 볼 수 있게"""
+    try:
+        LOG_DIR.mkdir(exist_ok=True)
+        with open(LOG_DIR / "agent.log", "a", encoding="utf-8") as f:
+            f.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} [{kind}] =====\n{text}\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def prep_claude_dir(files: dict[str, bytes]) -> None:
+    """Claude Code가 읽을 이미지를 긴 변 1568px로 줄여서 따로 저장 (큰 이미지는 느리거나 실패해서)"""
+    CLAUDE_DIR.mkdir(exist_ok=True)
+    for old in CLAUDE_DIR.glob("*.png"):
+        old.unlink()
+    for name, data in files.items():
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+        img.thumbnail((1568, 1568))
+        img.save(CLAUDE_DIR / name, format="PNG", optimize=True)
+
+
+def with_retry(fn, what: str):
+    """Claude Code 호출이 일시적으로 실패하면 한 번 더 시도 (로그인 문제는 재시도 안 함)"""
+    try:
+        return fn()
+    except RuntimeError as e:
+        msg = str(e)
+        log_event(what, msg)
+        if "로그인" in msg or "설치" in msg or "한도" in msg:
+            raise
+        st.caption(f"⏳ {what} 1차 실패 → 한 번 더 시도해요: {msg.splitlines()[0][:80]}")
+        try:
+            return fn()
+        except RuntimeError as e2:
+            log_event(what + " (재시도)", str(e2))
+            raise
+
+
+def claude_inputs(ref_bytes: list[bytes]) -> tuple[list[str], list[str], list[tuple[str, str]]]:
+    """스케치·레퍼런스·설계 도면·재료 맵을 Claude용 폴더에 준비. (레퍼런스, 설계 도면, 기타) 파일명"""
+    files = {n: b for n, b in attach_items(ref_bytes)}
+    prep_claude_dir(files)
+    refs = [n for n in files if n.startswith("2_")]
+    projs = [n for n in files if n.startswith("3_")]
+    return refs, projs, map_extra_files()
+
+
 # ---------------------------------------------------------------- 결과 검수 (Claude)
 def qa_engine() -> tuple[str | None, str | None]:
     """('code', None) = Claude Code 구독 / ('api', 키) / (None, None) = 사용 불가"""
     key = claude_key or os.getenv("ANTHROPIC_API_KEY", "") or _read(CLAUDE_KEY_FILE)
-    prefer_api = (use_codex and pipe_engine == "Claude API") or (not claude_sub and bool(claude_key))
+    prefer_api = (use_codex and pipe_engine == "Claude API") or (not claude_sub and not claude_code_mode
+                                                                  and bool(claude_key))
     if prefer_api and key:
         return "api", key
     if claude_code_status():
@@ -852,28 +1001,36 @@ def run_qa(i: int) -> bool:
         st.warning("검수하려면 Claude Code 로그인(구독) 또는 Claude API 키가 필요해요.")
         return False
     v = ss.versions[i]
-    refs, projs = _write_work_files()
+    refs, projs, extra_files = claude_inputs(ref_bytes)
     result_name = f"check_v{i + 1}.png"
-    (CODEX_DIR / result_name).write_bytes(v["png"])
-    extra_files, extra_bytes = list(map_extra_files()), list(map_extra_bytes())
+    prep_extra = {result_name: v["png"]}
+    extra_bytes = list(map_extra_bytes())
+    extra_files = list(extra_files)
     if (v.get("diff") or {}).get("png"):
         label = ("DIFF MAP (red = model edges missing in the result, blue = new edges; "
                  f"{v['diff']['pct']}% of model edges missing)")
-        (CODEX_DIR / f"diff_v{i + 1}.png").write_bytes(v["diff"]["png"])
+        prep_extra[f"diff_v{i + 1}.png"] = v["diff"]["png"]
         extra_files.append((f"diff_v{i + 1}.png", label))
         extra_bytes.append((v["diff"]["png"], label))
+    for name, data in prep_extra.items():  # 결과·비교 이미지도 줄여서 같은 폴더에
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+        img.thumbnail((1568, 1568))
+        img.save(CLAUDE_DIR / name, format="PNG", optimize=True)
     try:
         with st.spinner(f"Claude가 v{i + 1}을(를) 검수하고 있어요... 보통 1~3분"):
             if engine == "code":
-                res = claude_cli.qa(CODEX_DIR, result_name, "1_sketch.png", refs, review_context(),
-                                    v.get("prompt", ""), claude_cli.MODELS[cc_model], projects=projs,
-                                    extras=extra_files)
+                res = with_retry(lambda: claude_cli.qa(
+                    CLAUDE_DIR, result_name, "1_sketch.png", refs, review_context(), v.get("prompt", ""),
+                    claude_cli.MODELS[cc_model], projects=projs, extras=extra_files), f"v{i + 1} 검수")
             else:
                 res = claude_review.qa(key, claude_review.MODELS[claude_model_label], claude_effort, v["png"],
                                        ss.sketch_bytes, ref_bytes, review_context(), v.get("prompt", ""),
                                        project_bytes, extra_bytes)
     except RuntimeError as e:
+        log_event(f"v{i + 1} 검수 실패", str(e))
         st.error(f"v{i + 1} 검수 실패: {str(e).splitlines()[0]}")
+        with st.expander("자세한 오류"):
+            st.code(str(e)[-1500:], language=None)
         return False
     v["qa"] = res
     ss[f"rev_{i}"] = res.get("revision_prompt", "")
@@ -909,12 +1066,89 @@ def regenerate_from_qa(i: int) -> bool:
 
 def import_result(note: str) -> None:
     if b := clipboard_or_warn():
+        if ss.get("watch"):
+            ss.watch["ignore"].add(_fp(b))  # 자동 가져오기가 같은 이미지를 또 가져오지 않게
         register_result(b, note)
         st.toast(f"v{len(ss.versions)}로 가져왔어요.")
         st.rerun()
 
 
 # ================================================================ UI
+# ---------------------------------------------------------------- 🩺 원클릭 준비 상태
+def readiness() -> list[tuple[str, str, str]]:
+    """[(상태 ✅/⚠️/❌, 항목, 설명·해결 방법)]"""
+    rows = []
+    if use_codex:
+        if not codex_status():
+            rows.append(("❌", "이미지 생성 (Codex)", "Codex 미설치 → Node.js 설치 후 cmd에서 `npm install -g @openai/codex`"))
+        elif not codex_login_status().startswith("로그인됨"):
+            rows.append(("❌", "이미지 생성 (Codex)", "로그인 필요 → 사이드바 '🔑 Codex 로그인' 또는 codex_login_chrome.bat"))
+        else:
+            rows.append(("✅", "이미지 생성 (Codex)", f"자동 생성 가능 · 모델 {codex_model}"))
+    elif use_api:
+        rows.append(("✅" if api_key else "❌", "이미지 생성 (API)", "OpenAI API 키 있음" if api_key else "사이드바에 OpenAI API 키 필요"))
+    else:
+        rows.append(("⚠️", "이미지 생성 (ChatGPT 구독)",
+                     "반자동: ChatGPT 창에서 Ctrl+V·Enter는 직접 해야 해요. 결과는 '자동 가져오기'가 감지해요. "
+                     "완전 자동은 사이드바 '생성 방식 → Codex 자동'"))
+    cc_ok = bool(claude_code_status()) and claude_login_status().startswith("로그인됨")
+    key = claude_key or os.getenv("ANTHROPIC_API_KEY", "") or _read(CLAUDE_KEY_FILE)
+    if use_codex and pipe_engine == "검토 없이":
+        rows.append(("⚠️", "프롬프트 검토 (원클릭)", "'검토 없이'로 설정돼 있어요"))
+    elif (use_codex and pipe_engine.startswith("Claude Code")) or (not use_codex and claude_code_mode):
+        rows.append(("✅" if cc_ok else "❌", "프롬프트 검토 (Claude Code)",
+                     "자동 검토 가능" if cc_ok else
+                     ("로그인 필요 → '🔑 Claude Code 로그인' 또는 claude_login_chrome.bat" if claude_code_status()
+                      else "Claude Code 미설치 → claude.com/claude-code 안내대로 설치")))
+    elif claude_sub and not use_codex:
+        rows.append(("⚠️", "프롬프트 검토 (Claude 웹)", "직접 확인 방식: 복사·붙여넣기 필요. 자동은 '검토 방식 → Claude Code'"))
+    else:
+        rows.append(("✅" if key else "❌", "프롬프트 검토 (Claude API)", "API 키 있음" if key else "Claude API 키 필요"))
+    eng = qa_engine()[0]
+    if not auto_qa:
+        rows.append(("⚠️", "자동 검수", "꺼져 있어요 (사이드바 '🔎 이미지 생성 후 자동 Claude 검수')"))
+    else:
+        rows.append(("✅" if eng else "❌", "자동 검수",
+                     {"code": "Claude Code(구독)로 자동 검수", "api": "Claude API로 자동 검수"}.get(
+                         eng, "검수 엔진 없음 → Claude Code 설치·로그인 또는 Claude API 키")))
+    rows.append(("✅" if ss.get("sketch_bytes") else "⚠️", f"입력 ({INPUT_LABEL[work_type]})",
+                 "준비됨" if ss.get("sketch_bytes") else "③에 이미지를 넣어주세요"))
+    return rows
+
+
+_rows = readiness()
+_bad = sum(r[0] == "❌" for r in _rows)
+_warn = sum(r[0] == "⚠️" for r in _rows)
+with st.expander("🩺 원클릭 준비 상태 — " + ("모두 준비됨 ✅" if not (_bad or _warn) else
+                                          f"{'❌ ' + str(_bad) + '개 막힘 ' if _bad else ''}"
+                                          f"{'⚠️ ' + str(_warn) + '개 확인' if _warn else ''}"),
+                 expanded=bool(_bad)):
+    for icon, name, desc in _rows:
+        st.markdown(f"{icon} **{name}** — {desc}")
+    d1, d2, d3, d4 = st.columns(4)
+    if d1.button("🔄 다시 확인"):
+        tool_status.clear()
+        st.rerun()
+    if d2.button("🧪 Claude Code 테스트", disabled=not claude_code_status(),
+                 help="아주 짧은 질문을 보내서 실제로 응답하는지 확인 (10~60초)"):
+        with st.spinner("Claude Code 응답 확인 중..."):
+            ok, sec, out = claude_cli.selftest()
+        (st.success if ok else st.error)(f"Claude Code {'정상' if ok else '응답 실패'} · {sec:.0f}초")
+        if not ok:
+            log_event("Claude Code 테스트 실패", out)
+            st.code(out, language=None)
+    if d3.button("🧪 Codex 테스트", disabled=not (use_codex and codex_status()),
+                 help="이미지 없이 아주 짧은 질문으로 Codex 응답 확인 (사용량 아주 적음)"):
+        with st.spinner("Codex 응답 확인 중..."):
+            ok, sec, out = codex_bridge.selftest(codex_model)
+        (st.success if ok else st.error)(f"Codex {'정상' if ok else '응답 실패'} · {sec:.0f}초")
+        if not ok:
+            log_event("Codex 테스트 실패", out)
+            st.code(out[-800:], language=None)
+    if d4.button("📄 오류 기록 폴더"):
+        LOG_DIR.mkdir(exist_ok=True)
+        bridge.open_folder(LOG_DIR)
+
 # ---------------------------------------------------------------- ① 어떤 다이어그램
 TYPE_OPTIONS = {"다이어그램": DIAGRAM_TYPES, "평면 리터칭": PLAN_TYPES, "단면 리터칭": SECTION_TYPES,
                 "렌더링": RENDER_TYPES}
@@ -1230,7 +1464,10 @@ with c2:
                          use_container_width=True):
                 run_pipeline(ref_bytes, extra, draft)
             st.caption("또는 아래에서 단계별로 진행할 수 있어요.")
-        if claude_sub:
+        if claude_code_mode:
+            if st.button("🔍 Claude Code로 프롬프트 검토 (자동)", disabled=not (ready and claude_code_status())):
+                run_review_code(ref_bytes, draft)
+        elif claude_sub:
             if st.button("🔍 Claude에서 프롬프트 검토 (구독)", disabled=not ready):
                 send_to_claude(ref_bytes, draft)
             if ss.get("claude_request"):
@@ -1293,6 +1530,9 @@ with c2:
         elif st.button("🚀 ChatGPT로 보내기", type="primary", disabled=not ready):
             send_to_chatgpt(ref_bytes, extra)
         if use_chatgpt and ss.get("gpt_prompt"):
+            st.checkbox("📥 ChatGPT 결과 자동 가져오기 (이미지 복사·다운로드 감지 → 자동 검수)", value=True,
+                        key="auto_import")
+            chatgpt_watcher()
             img_step = ("입력창을 클릭하고 **Ctrl+V** → 이미지가 첨부돼요" if ss.get("clip_ok")
                         else "`to_chatgpt` 폴더의 이미지를 입력창에 **끌어다 놓기**")
             if ss.get("opened") == "desktop":
@@ -1402,7 +1642,10 @@ if ss.versions:
                 st.markdown(f"#### v{i + 1}")
                 qa = v.get("qa")
                 if qa is None:
-                    st.caption("아직 Claude 검수 전이에요.")
+                    if v.get("qa_skip"):
+                        st.warning(f"자동 검수를 못 했어요: {v['qa_skip']}. 위 '🩺 원클릭 준비 상태'를 확인하세요.")
+                    else:
+                        st.caption("아직 Claude 검수 전이에요.")
                     if st.button("🔎 Claude로 검수", key=f"qa_{i}", disabled=not (qa_engine()[0] and ss.sketch_bytes)):
                         if run_qa(i):
                             st.rerun()

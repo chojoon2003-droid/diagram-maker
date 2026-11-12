@@ -8,3 +8,5 @@ gemini_key.txt
 claude_key.txt
 to_codex/
 presets/
+logs/
+to_claude/
