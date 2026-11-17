@@ -220,3 +220,76 @@ if st.session_state.get("perm_res"):
         else:
             st.info(f"📁 파일이 만들어지지 않았어요 (폴더 안: {', '.join(res['made']) or '비어 있음'}). "
                     "권한이 없으면 Claude Code는 내용을 답변 글로만 보여줘요.")
+
+
+# ---------------------------------------------------------------- 5. 사용량 검수 (내 컴퓨터의 Claude Code 기록 합계)
+st.subheader("5. 사용량 검수 — 실제로 토큰이 쓰였나?")
+st.caption("내 컴퓨터에 저장된 Claude Code 기록(사용자 폴더\\.claude\\projects)을 읽어서, 요청마다 기록된 토큰을 합쳐 보여줘요. "
+           "기록은 내 컴퓨터에서만 읽고 어디로도 보내지 않아요.")
+
+
+def read_usage(days: int) -> list[dict]:
+    base = Path.home() / ".claude" / "projects"
+    rows, since = [], time.time() - days * 86400
+    if not base.exists():
+        return rows
+    for f in base.rglob("*.jsonl"):
+        try:
+            if f.stat().st_mtime < since:
+                continue
+            for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    o = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                msg = o.get("message") if isinstance(o, dict) else None
+                u = msg.get("usage") if isinstance(msg, dict) else None
+                if o.get("type") != "assistant" or not isinstance(u, dict):
+                    continue
+                rows.append({
+                    "time": (o.get("timestamp") or "")[:16].replace("T", " "),
+                    "session": (o.get("sessionId") or f.stem)[:8],
+                    "folder": Path(o.get("cwd") or "").name or f.parent.name,
+                    "model": msg.get("model", ""),
+                    "in": int(u.get("input_tokens") or 0), "out": int(u.get("output_tokens") or 0),
+                    "cache_r": int(u.get("cache_read_input_tokens") or 0),
+                    "cache_w": int(u.get("cache_creation_input_tokens") or 0),
+                })
+        except OSError:
+            continue
+    return sorted(rows, key=lambda r: r["time"], reverse=True)
+
+
+days = st.select_slider("기간", options=[1, 3, 7, 30], value=1, format_func=lambda d: f"최근 {d}일")
+if st.button("📊 사용량 검수"):
+    st.session_state.usage_rows = read_usage(days)
+    st.session_state.usage_days = days
+rows = st.session_state.get("usage_rows")
+if rows is not None:
+    if not rows:
+        st.info(f"최근 {st.session_state.usage_days}일 동안 기록된 사용량이 없어요. "
+                "(테스터로 질문을 보낸 적이 있는데도 0이면, 다른 사용자 계정으로 실행됐거나 기록 위치가 다를 수 있어요)")
+    else:
+        tot = {k: sum(r[k] for r in rows) for k in ("in", "out", "cache_r", "cache_w")}
+        n_sess = len({r["session"] for r in rows})
+        st.success(f"✅ 토큰이 사용됐어요 — 최근 {st.session_state.usage_days}일, 세션 {n_sess}개, 응답 {len(rows)}번")
+        c = st.columns(4)
+        c[0].metric("입력 합계", f"{tot['in']:,}")
+        c[1].metric("출력 합계", f"{tot['out']:,}")
+        c[2].metric("캐시 읽기 합계", f"{tot['cache_r']:,}")
+        c[3].metric("캐시 쓰기 합계", f"{tot['cache_w']:,}")
+        import pandas as pd
+
+        df = pd.DataFrame(rows)
+        by_sess = (df.groupby(["session", "folder"], as_index=False)
+                   .agg(시작=("time", "min"), 응답수=("in", "size"), 입력=("in", "sum"), 출력=("out", "sum"),
+                        캐시읽기=("cache_r", "sum"), 캐시쓰기=("cache_w", "sum"))
+                   .sort_values("시작", ascending=False))
+        st.markdown("**세션별** (폴더가 diagram-maker 또는 임시 폴더면 테스터·에이전트가 보낸 요청이에요)")
+        st.dataframe(by_sess, hide_index=True, use_container_width=True)
+        with st.expander("응답별 자세히"):
+            st.dataframe(df.rename(columns={"time": "시각", "session": "세션", "folder": "폴더", "model": "모델",
+                                            "in": "입력", "out": "출력", "cache_r": "캐시 읽기", "cache_w": "캐시 쓰기"}),
+                         hide_index=True, use_container_width=True)
+        st.caption("구독 로그인이라면 이 토큰은 돈으로 청구되지 않고 구독 사용 한도에서 차감돼요. "
+                   "남은 한도는 Claude Code에서 /usage, 또는 claude.ai → 설정 → 사용량에서 볼 수 있어요.")
