@@ -53,6 +53,28 @@ def run_claude(prompt: str, model: str, workdir: Path | None = None, allow_read:
             "cmd": " ".join(a if " " not in a else f'"{a}"' for a in args)}
 
 
+def show_usage(d: dict) -> None:
+    """Claude Code가 돌려준 사용량(토큰) 표시"""
+    u = d.get("usage") or {}
+    if not u and not d.get("modelUsage"):
+        st.caption("이 응답에는 토큰 정보가 없어요.")
+        return
+    st.markdown("**사용량 (토큰)**")
+    cols = st.columns(4)
+    cols[0].metric("입력", f"{u.get('input_tokens', 0):,}")
+    cols[1].metric("출력", f"{u.get('output_tokens', 0):,}")
+    cols[2].metric("캐시 읽기", f"{u.get('cache_read_input_tokens', 0):,}")
+    cols[3].metric("캐시 쓰기", f"{u.get('cache_creation_input_tokens', 0):,}")
+    for model_name, mu in (d.get("modelUsage") or {}).items():
+        st.caption(f"모델 `{model_name}` · 입력 {mu.get('inputTokens', 0):,} · 출력 {mu.get('outputTokens', 0):,} · "
+                   f"캐시 읽기 {mu.get('cacheReadInputTokens', 0):,}")
+    if d.get("total_cost_usd") is not None:
+        st.caption(f"참고 금액: ${d['total_cost_usd']:.4f} — API로 썼다면 드는 비용의 환산값이에요. "
+                   "구독(Pro/Max) 로그인으로 쓰면 이 금액이 청구되지 않고, 구독 사용 한도에서 차감돼요.")
+    if d.get("duration_ms"):
+        st.caption(f"Claude 처리 시간: {d['duration_ms'] / 1000:.1f}초 (API 대기 {d.get('duration_api_ms', 0) / 1000:.1f}초)")
+
+
 def show(res: dict) -> None:
     if res.get("error"):
         st.error(res["error"])
@@ -63,9 +85,15 @@ def show(res: dict) -> None:
     if d.get("result"):
         st.markdown("**Claude Code의 답:**")
         st.info(d["result"])
-    meta = {k: d.get(k) for k in ("session_id", "num_turns", "duration_ms", "total_cost_usd") if k in d}
-    if meta:
-        st.caption(" · ".join(f"{k}: {v}" for k, v in meta.items()))
+    show_usage(d)
+    denials = d.get("permission_denials") or []
+    if denials:
+        st.warning("🔒 권한이 없어 거부된 작업: " + ", ".join(
+            f"{x.get('tool_name', '?')}" + (f" ({(x.get('tool_input') or {}).get('file_path', '')})"
+                                            if (x.get("tool_input") or {}).get("file_path") else "")
+            for x in denials))
+    if d.get("session_id"):
+        st.caption(f"세션 ID: `{d['session_id']}` · 주고받은 횟수(turns): {d.get('num_turns', '-')}")
     with st.expander("원본 응답 / 오류 출력 (문제가 있으면 이걸 캡처해 주세요)"):
         st.caption(f"실행한 명령: `{res.get('cmd', '')}` · 종료 코드 {res.get('code')}")
         st.code(res.get("raw") or "(stdout 없음)", language="json")
@@ -139,3 +167,56 @@ if st.session_state.get("img_res"):
             st.success("🎉 샘플 글자 4721을 정확히 읽었어요 — 에이전트 검수에 필요한 이미지 읽기가 정상이에요.")
         else:
             st.warning("답에 4721이 없어요. 이미지를 제대로 못 읽었을 수 있어요 — 원본 응답을 캡처해서 보내주세요.")
+
+
+# ---------------------------------------------------------------- 4. 권한 테스트
+st.subheader("4. 권한 테스트 — 파일·프로그램·이미지를 만들어 달라고 하면?")
+st.caption("테스터와 에이전트는 Claude Code에 **파일 읽기(Read)만** 허용해요. 아래 요청을 보내면 Claude Code가 파일을 "
+           "만들려고 시도하는지, 실제로 파일이 생기는지, 어떤 권한이 거부됐는지 보여줘요. (빈 임시 폴더에서 실행돼서 "
+           "내 파일에는 영향이 없어요)")
+PERM_TESTS = {
+    "📄 파일 만들기": ("hello.txt 라는 파일을 만들고 '안녕하세요'라고 저장해줘.", "hello.txt"),
+    "🐍 프로그램 만들기": ("두 숫자를 더하는 파이썬 프로그램을 calc.py 파일로 만들어줘.", "calc.py"),
+    "🖼️ 이미지 만들기": ("파란 원이 그려진 이미지를 만들어서 circle.png 로 저장해줘.", "circle.png"),
+}
+pick = st.radio("요청", list(PERM_TESTS), horizontal=True)
+allow_write = st.checkbox("이번 테스트만 파일 쓰기(Write) 허용해 보기", value=False,
+                          help="켜면 Claude Code에 Write 권한을 줘서 실제로 파일이 생기는지 비교해 볼 수 있어요. "
+                               "임시 폴더 안에서만 실행돼요.")
+if st.button("🔐 권한 테스트 실행", disabled=not exe):
+    prompt, fname = PERM_TESTS[pick]
+    with tempfile.TemporaryDirectory() as d:
+        exe2 = claude_cli.find_claude()
+        args = [exe2, "-p", "--output-format", "json", "--model", model]
+        if allow_write:
+            args += ["--allowedTools", "Write"]
+        t = time.time()
+        try:
+            r = subprocess.run(args, input=prompt.encode("utf-8"), cwd=d, capture_output=True, timeout=600,
+                               creationflags=NO_WINDOW)
+            out = r.stdout.decode("utf-8", "replace").strip()
+            try:
+                data = json.loads(out.splitlines()[-1]) if out else {}
+            except json.JSONDecodeError:
+                data = {}
+            made = sorted(p.name for p in Path(d).iterdir())
+            st.session_state.perm_res = {
+                "ok": r.returncode == 0 and bool(data), "sec": time.time() - t, "data": data, "raw": out,
+                "stderr": r.stderr.decode("utf-8", "replace"), "code": r.returncode, "cmd": " ".join(args[1:]),
+                "made": made, "target": fname, "write": allow_write,
+                "content": (Path(d) / fname).read_text(encoding="utf-8", errors="replace")[:800]
+                if (Path(d) / fname).is_file() and not fname.endswith(".png") else "",
+            }
+        except subprocess.TimeoutExpired:
+            st.session_state.perm_res = {"error": "응답 시간 초과"}
+if st.session_state.get("perm_res"):
+    res = st.session_state.perm_res
+    show(res)
+    if "made" in res:
+        if res["target"] in res["made"]:
+            st.success(f"📁 실제로 `{res['target']}` 파일이 만들어졌어요 (Write 허용: {'예' if res['write'] else '아니오'}).")
+            if res.get("content"):
+                st.code(res["content"], language=None)
+        else:
+            st.info(f"📁 파일이 만들어지지 않았어요 (폴더 안: {', '.join(res['made']) or '비어 있음'}). "
+                    "권한이 없으면 Claude Code는 내용을 답변 글로만 보여줘요.")
