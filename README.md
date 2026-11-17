@@ -28,8 +28,8 @@ API 키 파일과 결과물(`outputs/`)은 git이 관리하지 않아 업데이�
 3. 아이콘 더블클릭 → 크롬에서 앱이 열림
 
 원클릭 자동(Codex + Claude Code)을 쓰려면:
-- Node.js 설치 → `npm install -g @openai/codex` → `codex_login_chrome.bat`
-- Claude Code 설치 → `claude_login_chrome.bat`
+- **`install_ai_tools.bat` 더블클릭** → Python·Node.js·Claude Code·Codex 중 없는 것만 자동 설치 + 로그인 안내
+- (직접 설치하려면) Node.js → `npm install -g @openai/codex` → `codex_login_chrome.bat` / Claude Code → `claude_login_chrome.bat`
 
 ## 보안
 API 키(`api_key.txt`, `gemini_key.txt`, `claude_key.txt`)와 생성 결과(`outputs/`, `inbox/`, `to_chatgpt/`, `to_codex/`)는

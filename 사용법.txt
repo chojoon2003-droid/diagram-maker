@@ -7,7 +7,16 @@
  3. 받기:  git clone https://github.com/chojoon2003-droid/diagram-maker.git
  4. 처음엔 GitHub 로그인 창이 떠요 -> "Sign in with your browser" -> 본인 GitHub 계정으로 로그인
     (로그인 정보가 저장돼서 다음부터는 안 물어봐요)
- 5. 문서\diagram-maker 폴더가 생겨요 -> 아래 [처음 한 번만] 진행
+ 5. 문서\diagram-maker 폴더가 생겨요 -> 아래 [🧰 AI 도구 한 번에 설치 — install_ai_tools.bat]
+폴더의 install_ai_tools.bat 더블클릭 -> Python, Node.js, Claude Code, Codex 를 확인하고 없는 것만 설치해요.
+ - 관리자 권한 필요 없음. 이미 있는 건 건너뜀. 끝나면 결과표(OK / 설치 필요)를 보여줘요.
+ - 마지막에 Claude Code·Codex 로그인을 물어봐요 (Y 누르면 크롬으로 로그인 페이지가 열려요).
+ - Claude Code는 Claude 유료 구독(Pro 이상) 계정이 있어야 써요.
+ - 노란색(설치 필요)이 남으면: 창을 닫고 install_ai_tools.bat 을 한 번 더 실행하세요
+   (방금 설치한 프로그램은 새 창에서부터 인식되는 경우가 많아요).
+ - winget이 없는 PC에서는 Python/Node.js 다운로드 페이지가 열려요 -> 직접 설치 후 다시 실행
+
+[처음 한 번만] 진행
 업데이트 받기 (코드가 바뀌었을 때):
  1. cd %USERPROFILE%\Documents\diagram-maker
  2. git pull
