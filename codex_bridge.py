@@ -30,7 +30,12 @@ SETUP_HELP = (
 
 
 def find_codex() -> str | None:
-    return shutil.which("codex")
+    """PATH에 없어도 npm 전역 설치 위치를 직접 찾아본다"""
+    found = shutil.which("codex")
+    if found:
+        return found
+    cands = [Path(os.environ["APPDATA"]) / "npm" / "codex.cmd"] if os.environ.get("APPDATA") else []
+    return next((str(c) for c in cands if c.is_file()), None)
 
 
 def codex_version() -> str:

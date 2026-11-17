@@ -78,6 +78,13 @@ if (Has "claude") {
     }
     Refresh-Path
 }
+# 설치는 됐는데 PATH 등록이 빠진 경우: 사용자 PATH에 영구 등록
+$claudeDir = "$env:USERPROFILE\.local\bin"
+if ((Test-Path "$claudeDir\claude.exe") -and -not (([Environment]::GetEnvironmentVariable("Path", "User") -split ";") -contains $claudeDir)) {
+    [Environment]::SetEnvironmentVariable("Path", ([Environment]::GetEnvironmentVariable("Path", "User").TrimEnd(";") + ";" + $claudeDir), "User")
+    Say "  Claude Code 위치를 PATH에 등록했어요 ($claudeDir). 새 창부터 'claude' 명령이 돼요." Green
+    Refresh-Path
+}
 $results["Claude Code"] = if (Has "claude") { "OK ($(Version 'claude'))" } else { "설치 실패 - 창을 새로 열고 'claude --version' 확인" }
 
 # ---------------------------------------------------------------- 4. Codex

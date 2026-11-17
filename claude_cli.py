@@ -25,7 +25,18 @@ SETUP_HELP = (
 
 
 def find_claude() -> str | None:
-    return shutil.which("claude")
+    """PATH에 없어도 공식 설치 위치들을 직접 찾아본다 (설치 직후 PATH 등록이 빠지는 경우 대비)"""
+    import os
+
+    found = shutil.which("claude")
+    if found:
+        return found
+    cands = [Path.home() / ".local" / "bin" / "claude.exe", Path.home() / ".local" / "bin" / "claude"]
+    if os.environ.get("APPDATA"):
+        cands.append(Path(os.environ["APPDATA"]) / "npm" / "claude.cmd")
+    if os.environ.get("LOCALAPPDATA"):
+        cands.append(Path(os.environ["LOCALAPPDATA"]) / "Microsoft" / "WinGet" / "Links" / "claude.exe")
+    return next((str(c) for c in cands if c.is_file()), None)
 
 
 def claude_version() -> str:
