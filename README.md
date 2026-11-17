@@ -31,6 +31,10 @@ API 키 파일과 결과물(`outputs/`)은 git이 관리하지 않아 업데이�
 - **`install_ai_tools.bat` 더블클릭** → Python·Node.js·Claude Code·Codex 중 없는 것만 자동 설치 + 로그인 안내
 - (직접 설치하려면) Node.js → `npm install -g @openai/codex` → `codex_login_chrome.bat` / Claude Code → `claude_login_chrome.bat`
 
+## Claude Code 연결만 따로 테스트
+`test_claude_code.bat` 더블클릭 → 기존 앱과 별개인 작은 화면(포트 8502)이 열려요.
+설치·로그인 상태 / 글 질문 / 이미지 읽기(샘플 'TEST 4721')를 테스트해서, 앱 → 내 Claude Code 연결이 되는지만 확인해요.
+
 ## 보안
 API 키(`api_key.txt`, `gemini_key.txt`, `claude_key.txt`)와 생성 결과(`outputs/`, `inbox/`, `to_chatgpt/`, `to_codex/`)는
 `.gitignore`로 저장소에 올라가지 않아요. 새 컴퓨터에서는 앱 사이드바에 키를 다시 넣고 "저장"을 누르세요.
